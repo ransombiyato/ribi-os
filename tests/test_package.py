@@ -211,6 +211,25 @@ def test_compositor_never_makes_windows_transparent():
     assert "unredir-if-possible = true" not in conf
 
 
+def test_doctor_reports_healthy_apps_without_false_failures():
+    """The doctor's app smoke test must not crash or flag benign warnings.
+
+    subprocess.TimeoutExpired can hand back str/bytes/None for stdout/stderr; a
+    GUI app that is still alive after the 8s timeout is healthy. A bare "error"
+    marker also matches benign GTK warnings, so the marker list stays specific.
+    """
+    src = (REPO / "ribi" / "sources" / "ribi-doctor.py").read_text(encoding="utf-8")
+    # The timeout branch must normalise each stream independently.
+    assert 'isinstance(stream, bytes)' in src, "TimeoutExpired streams must be normalised"
+    assert 'result.stdout or ""' in src, "non-timeout output must stay str"
+    # Specific markers only; a bare "error" would fail every GTK app.
+    assert '"error"' not in src.split("ERROR_MARKERS", 1)[1].split(")", 1)[0], \
+        "ERROR_MARKERS must not contain a bare 'error'"
+    assert "cannot open display" in src and "segfault" in src
+    # The OBS probe must select the shipped profile so it is not flagged.
+    assert '"--profile", "ribi"' in src, "doctor must probe OBS with the ribi profile"
+
+
 def test_installer_is_the_single_setup_flow():
     """Setup and the disk installer must be one program, not two."""
     source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")

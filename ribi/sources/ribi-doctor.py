@@ -34,7 +34,8 @@ APPS = [
     ("Text Editor", ["mousepad"], True),
     ("Document Viewer", ["zathura"], True),
     ("Audacity", ["audacity"], True),
-    ("OBS Studio", ["obs", "--disable-shutdown-check"], True),
+    ("OBS Studio", ["obs", "--disable-shutdown-check", "--profile", "ribi",
+                    "--collection", "ribi"], True),
     ("Settings", ["ribi-control-center.py"], True),
 ]
 
@@ -59,11 +60,15 @@ REQUIRED_DATABASES = [
     "/usr/share/mime/mime.cache",
 ]
 
-# Substrings that mean "this app did not start cleanly".
+# Substrings that mean "this app did not start cleanly". Keep these specific:
+# a bare "error" also matches benign warnings every GTK app emits (missing
+# AT-SPI bus, DRI3 unavailable, an optional icon), which would flag a healthy
+# app as broken.
 ERROR_MARKERS = (
-    "error", "abort", "assertion", "segmentation fault", "segfault",
-    "traceback", "no gsettings schemas", "cannot open display",
-    "symbol lookup error", "undefined symbol",
+    "segmentation fault", "segfault", "core dumped", "abort",
+    "assertion", "traceback (most recent call last)",
+    "cannot open display", "no gsettings schemas",
+    "symbol lookup error", "undefined symbol", "failed to execute",
 )
 
 ok = 0
@@ -109,10 +114,17 @@ def check_apps(only: str = "") -> None:
             output = (result.stdout or "") + (result.stderr or "")
         except subprocess.TimeoutExpired as exc:
             # A GUI app that is still running after the timeout is healthy; it
-            # simply does not exit on its own.
-            output = (exc.stdout or "") + (exc.stderr or "")
-            if isinstance(output, bytes):
-                output = output.decode("utf-8", "replace")
+            # simply does not exit on its own. TimeoutExpired can hand back a mix
+            # of str and bytes (or None) for stdout/stderr, so normalise each
+            # stream before joining them.
+            def _text(stream):
+                if stream is None:
+                    return ""
+                if isinstance(stream, bytes):
+                    return stream.decode("utf-8", "replace")
+                return stream
+
+            output = _text(exc.stdout) + _text(exc.stderr)
             lowered = output.lower()
             if any(marker in lowered for marker in ERROR_MARKERS):
                 report("fail", f"{label}: errors while running:\n{output.strip()[:800]}")

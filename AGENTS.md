@@ -174,6 +174,14 @@ Gotchas learned the hard way:
   Chromium/Firefox hang. Use `HOME=/home/ribi` so apps pick up the shipped
   config. Apps run as `root` here while the image runs them as `ribi`, so treat
   a chroot run as a smoke test, not a full desktop session.
+- **The doctor's app smoke test must tolerate warnings.** Every GTK app on this
+  image logs benign warnings (missing AT-SPI bus, DRI3 unavailable, an optional
+  icon), so `ERROR_MARKERS` in `ribi-doctor.py` lists only hard failures — a
+  bare `"error"` marker fails every app. `subprocess.TimeoutExpired` can return
+  `str`, `bytes`, or `None` for `stdout`/`stderr`; normalise each stream before
+  joining or the doctor crashes with `TypeError`. A GUI app still alive after
+  the timeout is healthy, not a failure. The doctor's OBS probe also needs
+  `--profile ribi --collection ribi`.
 - **Setup and the installer are one program.** `ribi-setup.py` was merged into
   `ribi-installer.py`; the single `ribi-installer` runs the whole wizard
   (identity, networking, then erase-install / persistence / ram-only). Do not
