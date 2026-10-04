@@ -58,7 +58,7 @@ APPS = [
     ("audio", "Audacity", "audacity", "audio"),
     ("screenshot", "Screenshot", "ribi-screenshot", "screenshot"),
     ("control", "Settings", "ribi-control-center.py", "control"),
-    ("obs", "OBS Studio", "obs --disable-shutdown-check", "obs"),
+    ("obs", "OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs"),
 ]
 
 QUICK = ["files", "terminal", "zen", "editor", "control"]

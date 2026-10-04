@@ -146,6 +146,34 @@ Gotchas learned the hard way:
   needs `libv4l2`, which only `v4l-utils` provides; OBS depends on the soname
   `libv4l2.so.0`, which the resolver cannot map back to a package, so
   `v4l-utils` must stay in `TARGET_APK_PACKAGES_APPS`.
+- **OBS reads the recording container from `[SimpleOutput]`, not `[Output]`.**
+  A `RecFormat2=mkv` key under `[Output]` is silently ignored and OBS records
+  hybrid MP4. The profile's `[General] Name` must match the profile directory
+  name (`ribi`), and OBS selects the profile/scene collection from `user.ini`
+  (`[Basic]`), *not* `global.ini`. The reliable fix is to name both on the
+  command line: every launch path runs
+  `obs --disable-shutdown-check --profile ribi --collection ribi`. A shipped
+  scene collection (`ribi/payloads/obs-scene-collection.json`, `name=ribi`) is
+  written to `basic/scenes/ribi.json` so the first launch is not "Untitled".
+- **OBS's `FirstRun` must stay `false`.** With `FirstRun=true` OBS launches its
+  auto-configuration wizard on first start, which re-detects the encoder and
+  container and discards the shipped `RecFormat2=mkv` fix.
+- **Zen Browser cannot run on musl + gcompat.** The official Zen tarball is a
+  glibc Firefox build. `libc.so.6` is a symlink to `libgcompat.so.0`, and
+  gcompat is missing several glibc-fortify symbols Zen's binary imports
+  (`__vfprintf_chk`, `__strcat_chk`, `__vsnprintf_chk`, `__longjmp_chk`,
+  `__memcpy_chk`, `isinf`, `isnan`). A musl shim exporting those forwards them
+  to musl and clears `ldd`'s relocation errors, but Zen then deadlocks in early
+  init on a `FUTEX_WAIT_PRIVATE` and never spawns a child. gcompat cannot
+  provide Firefox's threading, so the bundled browser does not start; replace
+  it with a musl-native browser or a real glibc rootfs before relying on it.
+- **A chroot of the built rootfs can run the real guest apps for testing.**
+  `sudo chroot ribi-build-workspace/rootfs <binary>` with `DISPLAY` pointed at a
+  host Xvfb exercises the actual image binaries (GTK, X11, OBS, …). Bind `/proc`,
+  `/dev`, `/dev/pts`, `/tmp/.X11-unix`, and mount a `tmpfs` on `/dev/shm` or
+  Chromium/Firefox hang. Use `HOME=/home/ribi` so apps pick up the shipped
+  config. Apps run as `root` here while the image runs them as `ribi`, so treat
+  a chroot run as a smoke test, not a full desktop session.
 - **Setup and the installer are one program.** `ribi-setup.py` was merged into
   `ribi-installer.py`; the single `ribi-installer` runs the whole wizard
   (identity, networking, then erase-install / persistence / ram-only). Do not
@@ -173,7 +201,4 @@ Gotchas learned the hard way:
   shell on `ttyS0` and never starts Xorg. To inspect the desktop, boot normally
   and use the QEMU monitor `screendump`, or start Xorg by hand in the serial
   shell.
-- **OBS's `FirstRun` must stay `false`.** With `FirstRun=true` OBS launches its
-  auto-configuration wizard on first start, which re-detects the encoder and
-  container and discards the shipped `RecFormat2=mkv` fix.
 

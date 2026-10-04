@@ -1300,6 +1300,12 @@ exec /sbin/poweroff -f
         # "Writing Hybrid MP4/MOV file"). MKV is the mature, crash-safe muxer
         # and needs no fragmented-MP4 path, so ship a profile that selects it.
         # The audio encoder is left at OBS's default; only the container changes.
+        #
+        # OBS only loads a profile/scene selection that its own configuration
+        # names, and it looks those up in user.ini (not global.ini). We ship
+        # both a named "ribi" profile and the "ribi" scene collection below.
+        # The desktop launcher still passes --profile ribi --collection ribi,
+        # so the container is guaranteed even if the wizard is ever re-enabled.
         obs_base = DIR_ROOTFS / "home/ribi/.config/obs-studio"
         # FirstRun=false skips OBS's auto-configuration wizard, which would
         # otherwise re-detect the encoder/container on first launch and discard
@@ -1315,8 +1321,13 @@ ProfileDir=ribi
 SceneCollection=ribi
 SceneCollectionFile=ribi
 """)
-        write_file(obs_base / "basic/profiles/ribi/basic.ini", """[Output]
+        write_file(obs_base / "basic/profiles/ribi/basic.ini", """[General]
+Name=ribi
+
+[Output]
 Mode=Simple
+
+[SimpleOutput]
 RecFormat2=mkv
 RecQuality=Stream
 RecEncoder=x264
@@ -1333,6 +1344,7 @@ FPSCommon=30
 SampleRate=48000
 ChannelSetup=Stereo
 """)
+        write_file(obs_base / "basic/scenes/ribi.json", _payload("obs-scene-collection.json"))
         (obs_base / "basic/scenes").mkdir(parents=True, exist_ok=True)
         for sub in (".config", ".config/obs-studio"):
             try:
@@ -1367,7 +1379,7 @@ ChannelSetup=Stereo
             ("ribi-file-explorer.desktop", "Ribi File Explorer", "ribi-file-explorer %U", "system-file-manager", "System;FileManager;", False),
             ("ribi-terminal.desktop", "Ribi Terminal", "ribi-terminal", "utilities-terminal", "System;TerminalEmulator;", False),
             ("zen-browser-ribi.desktop", "Zen Browser", "zen-browser %U", "zen-browser", "Network;WebBrowser;", False),
-            ("obs-studio-ribi.desktop", "OBS Studio", "obs --disable-shutdown-check", "obs", "AudioVideo;Recorder;", False),
+            ("obs-studio-ribi.desktop", "OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs", "AudioVideo;Recorder;", False),
             ("ribi-screenshot.desktop", "Ribi Screenshot", "ribi-screenshot", "camera-photo", "Graphics;Utility;", False),
             ("ribi-calculator.desktop", "Calculator", "galculator", "accessories-calculator", "Utility;Calculator;", False),
             ("ribi-image-viewer.desktop", "Image Viewer", "ristretto %U", "image-x-generic", "Graphics;Viewer;", False),

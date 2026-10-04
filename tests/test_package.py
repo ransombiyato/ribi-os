@@ -14,6 +14,7 @@ it, so the tests no longer compare against a legacy reference.
 """
 
 import importlib
+import json
 import py_compile
 import sys
 from pathlib import Path
@@ -170,12 +171,29 @@ def test_default_desktop_apps_present_and_catalogued():
 
 
 def test_obs_defaults_use_crash_safe_muxer():
-    """OBS must not default to the hybrid MP4 muxer that segfaulted."""
+    """OBS must not default to the hybrid MP4 muxer that segfaulted.
+
+    OBS only reads the recording container from [SimpleOutput]; a key placed
+    under [Output] is silently ignored and the hybrid MP4 muxer is used. OBS
+    also only loads a profile whose [General] Name matches, and the profile and
+    scene collection must be named on the command line or OBS falls back to a
+    fresh "Untitled" profile.
+    """
     source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    assert "RecFormat2=mkv" in source, "OBS should default to the mkv muxer"
-    # FirstRun=true would launch OBS's auto-config wizard and overwrite the
-    # MKV recording format we ship, so it must be disabled.
+    assert "[SimpleOutput]" in source and "RecFormat2=mkv" in source, \
+        "OBS should default to the mkv muxer under [SimpleOutput]"
+    # The mkv key must live under [SimpleOutput], not the ignored [Output] block.
+    simple = source.split("[SimpleOutput]", 1)[1].split("[", 1)[0]
+    assert "RecFormat2=mkv" in simple, "RecFormat2 must be under [SimpleOutput]"
+    assert "Name=ribi" in source, "the shipped OBS profile must be named ribi"
     assert "FirstRun=false" in source, "OBS first-run wizard must be disabled"
+    # Every launch path must select the shipped profile and scene collection.
+    for rel in ("builder.py", "components/ribi-dock.py", "components/ribi-launcher.py"):
+        text = (REPO / "ribi" / rel).read_text(encoding="utf-8")
+        assert "--profile ribi --collection ribi" in text, \
+            f"{rel} must launch OBS with the ribi profile/collection"
+    scene = json.loads((REPO / "ribi" / "payloads" / "obs-scene-collection.json").read_text())
+    assert scene["name"] == "ribi", "the scene collection payload must be named ribi"
 
 
 def test_v4l2_runtime_is_installed_for_obs():

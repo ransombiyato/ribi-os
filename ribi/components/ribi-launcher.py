@@ -46,7 +46,7 @@ CATALOG = [
     ("Audacity", "audacity", "audio", "audio sound record edit waveform"),
     ("Screenshot", "ribi-screenshot", "screenshot", "capture screen image"),
     ("Control Center", "ribi-control-center.py", "control", "settings preferences system"),
-    ("OBS Studio", "obs --disable-shutdown-check", "obs", "record stream video"),
+    ("OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs", "record stream video"),
     ("Snake", "ribi-terminal -e ribi-snake", "games", "game play"),
     ("2048", "ribi-terminal -e ribi-2048", "games", "game play puzzle"),
     ("Ribi Doctor", "ribi-terminal -e ribi-doctor", "control", "diagnostics logs health check doctor"),
