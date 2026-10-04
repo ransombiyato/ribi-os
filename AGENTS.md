@@ -103,4 +103,18 @@ Gotchas learned the hard way:
   read `/etc/X11/Xresources/ribi` via `xrdb -merge` (done in `ribi-wm.py`), so
   they match the Ribi tokens without replacing the stock `XTerm` app-defaults.
   `usr/local/bin/ribi-terminal` prefers lxterminal and falls back to xterm.
+- **The launcher's focused search entry eats Return.** A `Gtk.Entry` consumes
+  Enter and emits `activate`, so a window-level key handler never sees it and
+  "Enter to launch" silently does nothing. Connect `activate` on the entry too
+  and guard with a one-shot flag, because the same Return can also reach the
+  window handler and would otherwise start the app twice.
+- **`grab_focus` before a window is mapped is dropped.** Under Openbox the
+  launcher could be visible while the search entry was not yet focused, so the
+  first keystrokes went nowhere. `present()`, `set_focus()`, then retry
+  `grab_focus()` on an idle callback and a short timeout.
+- **QEMU `input-send-event` is unreliable for mouse/key sequences.** Pointer
+  moves/clicks and repeated Super-key chords can be silently dropped or arrive
+  out of order, which makes a broken UI look like a code bug. Verify GUI
+  behaviour with `xdotool` inside the chroot against `Xvfb` (bind `/dev/pts`,
+  `/tmp/.X11-unix`, and a real `/dev/null`) before blaming the code.
 
