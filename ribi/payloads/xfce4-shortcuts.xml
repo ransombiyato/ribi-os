@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-keyboard-shortcuts" version="1.0">
+  <property name="commands" type="empty">
+    <property name="custom" type="empty">
+      <property name="&lt;Primary&gt;&lt;Shift&gt;p" type="string" value="/usr/local/bin/ribi-screenshot-full"/>
+      <property name="&lt;Primary&gt;&lt;Shift&gt;k" type="string" value="/usr/local/bin/ribi-screenshot-selection"/>
+    </property>
+  </property>
+</channel>

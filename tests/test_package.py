@@ -72,3 +72,43 @@ def test_bundled_wallpaper_is_a_real_png():
 def test_cli_exposes_main():
     from ribi import cli
     assert callable(cli.main)
+
+
+def test_externalized_payloads_match_original():
+    """Desktop/session config payloads must survive the move to ribi/payloads/."""
+    names = {
+        "lightdm_conf": "lightdm.conf",
+        "desktop_session": "ribi-desktop-session.sh",
+        "dump_session": "ribi-dump-session.sh",
+        "xfce_session": "ribi-xfce-session.sh",
+        "session_wrapper": "ribi-session-wrapper.sh",
+        "direct_xsession": "ribi-direct-xsession.sh",
+        "wallpaper_xml": "xfce4-desktop.xml",
+        "wallpaper_viewer": "ribi-wallpaper-viewer.sh",
+        "gtk_probe_py": "ribi-gtk-probe.py",
+        "handoff_py": "ribi-user-handoff.py",
+        "panel_xml": "xfce4-panel.xml",
+        "shortcuts_xml": "xfce4-shortcuts.xml",
+        "direct": "ribi-direct-desktop.sh",
+        "user_desktop": "ribi-user-desktop.sh",
+        "openbox_autostart": "openbox-autostart.sh",
+        "visible": "ribi-visible-session.sh",
+        "xorg_conf": "xorg.conf",
+        "xfce_clients": "ribi-xfce-clients.sh",
+        "net_up_script": "ribi-netup.sh",
+    }
+    want = {}
+    for node in ast.walk(_legacy_tree()):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in names
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+                and len(node.value.value) >= 300):
+            want[node.targets[0].id] = node.value.value
+
+    assert len(want) == len(names), f"expected {len(names)} payloads, found {len(want)}"
+    payloads = REPO / "ribi" / "payloads"
+    for var, filename in names.items():
+        got = (payloads / filename).read_text(encoding="utf-8")
+        assert got == want[var], f"payload {var} ({filename}) changed during externalization"

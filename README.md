@@ -34,6 +34,9 @@ ribi/
     ribi-installer.py        disk installer
     ribi-edit.py             text editor
     ribi-snake.py / ribi-2048.py   games
+  payloads/                Desktop/session config written into the OS
+                           (lightdm, xfce4 panel/desktop, xorg.conf,
+                           session wrappers, netup script, ...).
   assets/wallpaper.png     Bundled desktop wallpaper.
 legacy/                    The original single-file builder, kept for reference.
 ```

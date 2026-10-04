@@ -28,6 +28,13 @@ from .kernel_config import get_bespoke_kernel_config
 from .logging_utils import BuildLogger, run_cmd, sha256_file, write_file
 from .sources import SRC_LIVE_INIT, SRC_RIBI_2048, SRC_RIBI_CLI, SRC_RIBI_INIT, SRC_RIBI_INSTALLER, SRC_RIBI_PKG, SRC_RIBI_SETUP, SRC_RIBI_SNAKE, SRC_RIBI_SVC
 
+_PAYLOADS_DIR = Path(__file__).resolve().parent / "payloads"
+
+
+def _payload(filename: str) -> str:
+    """Load a target-OS payload file staged under ``ribi/payloads/``."""
+    return (_PAYLOADS_DIR / filename).read_text(encoding="utf-8")
+
 
 class RibiMasterBuilder:
     def __init__(self, resume: bool = False):
@@ -890,67 +897,17 @@ exit $status
         shutil.copy2(WALLPAPER_SOURCE, DIR_ROOTFS / "usr/share/backgrounds/ribi-wallpaper-original.png")
         wallpaper_dest.chmod(0o644)
         BuildLogger.info(f"Installed supplied wallpaper at /{WALLPAPER_TARGET}")
-        lightdm_conf = """[Seat:*]
-autologin-user=ribi
-autologin-user-timeout=0
-autologin-session=ribi-direct
-user-session=ribi-direct
-greeter-session=lightdm-gtk-greeter
-minimum-vt=1
-xserver-command=/usr/local/bin/ribi-xorg -nolisten tcp -noreset -keeptty -ac
-session-wrapper=/usr/local/bin/ribi-session-wrapper
-display-stopped-script=/usr/local/bin/ribi-dump-session
-"""
+        lightdm_conf = _payload("lightdm.conf")
         write_file(DIR_ROOTFS / "etc/lightdm/lightdm.conf", lightdm_conf)
         write_file(DIR_ROOTFS / "etc/lightdm/lightdm-gtk-greeter.conf", "[greeter]\nbackground=#101820\n")
         write_file(DIR_ROOTFS / "etc/skel/.xinitrc", "exec startxfce4\n")
         # Start the display manager as root; LightDM drops the session to ribi.
 
-        desktop_session = """#!/bin/sh
-set -eu
-mkdir -p /run/user/1000
-chown 1000:1000 /run/user/1000
-chmod 700 /run/user/1000
-chown -R 1000:1000 /home/ribi
-export DISPLAY=${DISPLAY:-:0}
-export HOME=/home/ribi
-export USER=ribi
-export LOGNAME=ribi
-export XDG_RUNTIME_DIR=/run/user/1000
-export XAUTHORITY=${XAUTHORITY:-/home/ribi/.Xauthority}
-printf '[RIBI-SETUP] session display=%s uid=%s\n' "$DISPLAY" "$(id -u)" >/dev/ttyS0 2>/dev/null || true
-exec /usr/local/bin/ribi-xfce-session
-"""
+        desktop_session = _payload("ribi-desktop-session.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-desktop-session", desktop_session, mode=0o755)
-        dump_session = """#!/bin/sh
-printf '\n[RIBI-DUMP] session stopped\n' >/dev/ttyS0 2>/dev/null || true
-for f in /tmp/ribi-xsession.log /tmp/ribi-xfce-session.log /tmp/ribi-session-wrapper.log; do
-  if [ -f "$f" ]; then
-    printf '[RIBI-DUMP] %s\n' "$f" >/dev/ttyS0 2>/dev/null || true
-    cat "$f" >/dev/ttyS0 2>/dev/null || true
-  fi
-done
-exit 0
-"""
+        dump_session = _payload("ribi-dump-session.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-dump-session", dump_session, mode=0o755)
-        xfce_session = """#!/bin/sh
-LOG=/tmp/ribi-xfce-session.log
-printf '[RIBI-XFCE] entered\n' >/dev/ttyS0 2>/dev/null || true
-printf '[RIBI-XFCE] entered uid=%s display=%s home=%s\n' "$(id -u 2>/dev/null)" "${DISPLAY:-}" "${HOME:-}" >>"$LOG" 2>&1
-export DISPLAY=${DISPLAY:-:0}
-export XDG_RUNTIME_DIR=/run/user/1000
-export XDG_CURRENT_DESKTOP=XFCE
-export XDG_SESSION_DESKTOP=xfce
-export XDG_SESSION_TYPE=x11
-export GTK_ICON_THEME=RibiShapes
-export GDK_BACKEND=x11
-export MOZ_ENABLE_WAYLAND=0
-mkdir -p /run/user/1000 "$HOME/.config" >>"$LOG" 2>&1 || true
-chown 1000:1000 /run/user/1000 >>"$LOG" 2>&1 || true
-printf '[RIBI-XFCE] launching dbus-run-session\n' >>"$LOG" 2>&1
-printf '[RIBI-XFCE] exec dbus-run-session\n' >/dev/ttyS0 2>/dev/null || true
-exec /usr/bin/dbus-run-session -- /usr/bin/xfce4-session >>"$LOG" 2>&1
-"""
+        xfce_session = _payload("ribi-xfce-session.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-xfce-session", xfce_session, mode=0o755)
         xfwm_defaults = """<?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfwm4" version="1.0">
@@ -997,63 +954,18 @@ Exec=/usr/bin/zen-browser --no-sandbox --disable-gpu --disable-dev-shm-usage --u
 OnlyShowIn=XFCE;
 X-GNOME-Autostart-enabled=true
 """
-        session_wrapper = """#!/bin/sh
-LOG=/tmp/ribi-session-wrapper.log
-printf '[RIBI-WRAPPER] entered uid=%s args=%s display=%s home=%s\n' "$(id -u 2>/dev/null)" "$*" "${DISPLAY:-}" "${HOME:-}" >>"$LOG" 2>&1
-printf '[RIBI-WRAPPER] entered\n' >/dev/ttyS0 2>/dev/null || true
-if [ "$#" -gt 0 ]; then
-    exec "$@" >>"$LOG" 2>&1
-fi
-exec /usr/local/bin/ribi-xfce-session >>"$LOG" 2>&1
-"""
+        session_wrapper = _payload("ribi-session-wrapper.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-session-wrapper", session_wrapper, mode=0o755)
         # Alpine's stock Xsession sources interactive profile logic before doing
         # an unquoted exec. Use a minimal deterministic handoff for LightDM.
-        direct_xsession = """#!/bin/sh
-LOG=/tmp/ribi-xsession.log
-printf '[RIBI-XSESSION] direct visible session args=%s uid=%s display=%s\n' "$*" "$(id -u 2>/dev/null)" "${DISPLAY:-}" >>"$LOG" 2>&1
-printf '[RIBI-XSESSION] launching persistent visible session\n' >/dev/ttyS0 2>/dev/null || true
-exec /usr/local/bin/ribi-visible-session >>"$LOG" 2>&1
-"""
-        wallpaper_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-desktop" version="1.0">
-  <property name="backdrop" type="empty">
-    <property name="screen0" type="empty">
-      <property name="monitor0" type="empty">
-        <property name="image-path" type="string" value="/usr/share/backgrounds/ribi-wallpaper.png"/>
-        <property name="image-style" type="int" value="5"/>
-        <property name="color-style" type="int" value="0"/>
-        <property name="color1" type="array">
-          <value type="uint" value="0"/>
-          <value type="uint" value="0"/>
-          <value type="uint" value="0"/>
-          <value type="uint" value="65535"/>
-        </property>
-        <property name="color2" type="array">
-          <value type="uint" value="0"/>
-          <value type="uint" value="0"/>
-          <value type="uint" value="0"/>
-          <value type="uint" value="65535"/>
-        </property>
-      </property>
-    </property>
-  </property>
-</channel>
-"""
+        direct_xsession = _payload("ribi-direct-xsession.sh")
+        wallpaper_xml = _payload("xfce4-desktop.xml")
         wallpaper_cfg = DIR_ROOTFS / "home/ribi/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
         write_file(wallpaper_cfg, wallpaper_xml)
         wallpaper_data = base64.b64encode(wallpaper_dest.read_bytes()).decode("ascii")
         wallpaper_html = f"""<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{{margin:0;width:100%;height:100%;overflow:hidden;background:linear-gradient(135deg,#08090b 0%,#2b1118 42%,#62545b 72%,#111216 100%)}}img{{width:100vw;height:100vh;object-fit:cover;display:block}}</style></head><body><img src=\"data:image/png;base64,{wallpaper_data}\" alt=\"Ribi OS wallpaper\"></body></html>\n"""
         write_file(DIR_ROOTFS / "usr/share/backgrounds/ribi-wallpaper.html", wallpaper_html)
-        wallpaper_viewer = """#!/bin/sh
-set -eu
-path=/usr/share/backgrounds/ribi-wallpaper.png
-printf '[RIBI-WALLPAPER] painting X root %s\\n' "$path" >/dev/ttyS0 2>/dev/null || true
-# Paint the X root window instead of creating a foreground image window. This
-# keeps the wallpaper visible while leaving the panel, launcher, and app windows
-# above it in the normal stacking order.
-exec /usr/bin/feh --bg-fill --no-fehbg "$path"
-"""
+        wallpaper_viewer = _payload("ribi-wallpaper-viewer.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-wallpaper-viewer", wallpaper_viewer, mode=0o755)
         dock_src = Path(__file__).with_name("ribi-dock.py")
         if not dock_src.is_file():
@@ -1080,90 +992,11 @@ exec /usr/bin/feh --bg-fill --no-fehbg "$path"
         # Keep the historical launcher path as a compatibility shim; the desktop
         # now uses the native dock and never imports GTK for the app menu.
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-app-launcher", "#!/bin/sh\nexec /usr/local/bin/ribi-dock --menu\n", mode=0o755)
-        gtk_probe_py = r'''#!/usr/bin/python3
-import sys, faulthandler
-faulthandler.enable()
-faulthandler.dump_traceback_later(5, repeat=True, file=sys.stderr)
-def mark(s):
-    try: open('/dev/ttyS0','a').write('[RIBI-GTK-PROBE] '+s+'\n')
-    except Exception: pass
-mark('import-start')
-import gi
-mark('gi-imported')
-gi.require_version('Gtk', '3.0')
-mark('gtk-version-required')
-from gi.repository import Gtk
-mark('gtk-imported')
-win = Gtk.Window(title='Ribi GTK probe')
-win.set_default_size(520, 260)
-win.connect('destroy', Gtk.main_quit)
-label = Gtk.Label(label='Ribi GTK window probe')
-win.add(label)
-mark('window-created')
-win.show_all()
-mark('window-shown')
-Gtk.main()
-'''
+        gtk_probe_py = _payload("ribi-gtk-probe.py")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-gtk-probe", gtk_probe_py, mode=0o755)
-        handoff_py = """#!/usr/bin/python3
-import os, sys, traceback
-def mark(s):
-    line='[RIBI-HANDOFF] '+s+'\\n'
-    try: open('/tmp/ribi-handoff.log','a').write(line)
-    except Exception: pass
-    try: open('/dev/ttyS0','a').write(line)
-    except Exception: pass
-try:
-    mark('python-start uid=%s'%os.getuid())
-    env=os.environ.copy()
-    env.update(DISPLAY=':0', HOME='/home/ribi', USER='ribi', LOGNAME='ribi',
-               XDG_RUNTIME_DIR='/run/user/1000', XDG_CURRENT_DESKTOP='Ribi',
-               XDG_SESSION_DESKTOP='ribi')
-    os.setgroups([1000]); mark('groups=1000')
-    os.setgid(1000); mark('gid=1000')
-    os.setuid(1000); mark('uid=1000')
-    os.environ.clear(); os.environ.update(env)
-    mark('exec-session')
-    os.execve('/usr/local/bin/ribi-user-desktop', ['/usr/local/bin/ribi-user-desktop'], env)
-except Exception as e:
-    mark('ERROR '+repr(e)); traceback.print_exc(file=sys.stderr); raise
-"""
+        handoff_py = _payload("ribi-user-handoff.py")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-user-handoff", handoff_py, mode=0o755)
-        panel_xml = """<?xml version="1.0" encoding="UTF-8"?>
-
-<channel name="xfce4-panel" version="1.0">
-  <property name="configver" type="int" value="2"/>
-  <property name="panels" type="array"><value type="int" value="1"/></property>
-  <property name="dark-mode" type="bool" value="true"/>
-  <property name="panel-1" type="empty">
-    <property name="position" type="string" value="p=10;x=0;y=0"/>
-    <property name="length" type="uint" value="100"/>
-    <property name="position-locked" type="bool" value="true"/>
-    <property name="icon-size" type="uint" value="32"/>
-    <property name="size" type="uint" value="54"/>
-    <property name="plugin-ids" type="array">
-      <value type="int" value="1"/><value type="int" value="2"/><value type="int" value="3"/>
-      <value type="int" value="4"/><value type="int" value="5"/><value type="int" value="6"/>
-      <value type="int" value="7"/><value type="int" value="8"/><value type="int" value="9"/>
-      <value type="int" value="10"/><value type="int" value="11"/><value type="int" value="12"/>
-    </property>
-  </property>
-  <property name="plugins" type="empty">
-    <property name="plugin-1" type="string" value="launcher"><property name="items" type="array"><value type="string" value="ribi-app-menu.desktop"/></property></property>
-    <property name="plugin-2" type="string" value="separator"><property name="expand" type="bool" value="true"/></property>
-    <property name="plugin-3" type="string" value="tasklist"><property name="grouping" type="uint" value="1"/></property>
-    <property name="plugin-4" type="string" value="separator"/>
-    <property name="plugin-5" type="string" value="launcher"><property name="items" type="array"><value type="string" value="ribi-file-explorer.desktop"/></property></property>
-    <property name="plugin-6" type="string" value="launcher"><property name="items" type="array"><value type="string" value="xfce4-terminal.desktop"/></property></property>
-    <property name="plugin-7" type="string" value="launcher"><property name="items" type="array"><value type="string" value="zen-browser-ribi.desktop"/></property></property>
-    <property name="plugin-8" type="string" value="launcher"><property name="items" type="array"><value type="string" value="ribi-edit.desktop"/></property></property>
-    <property name="plugin-9" type="string" value="launcher"><property name="items" type="array"><value type="string" value="xfce4-screenshooter-ribi.desktop"/></property></property>
-    <property name="plugin-10" type="string" value="launcher"><property name="items" type="array"><value type="string" value="obs-studio-ribi.desktop"/></property></property>
-    <property name="plugin-11" type="string" value="separator"/>
-    <property name="plugin-12" type="string" value="clock"/>
-  </property>
-</channel>
-"""
+        panel_xml = _payload("xfce4-panel.xml")
         write_file(DIR_ROOTFS / "home/ribi/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml", panel_xml)
         write_file(DIR_ROOTFS / "etc/xdg/xfce4/panel/default.xml", panel_xml)
         screenshot_full = """#!/bin/sh
@@ -1180,16 +1013,7 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
 """
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-screenshot-full", screenshot_full, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-screenshot-selection", screenshot_select, mode=0o755)
-        shortcuts_xml = """<?xml version="1.0" encoding="UTF-8"?>
-<channel name="xfce4-keyboard-shortcuts" version="1.0">
-  <property name="commands" type="empty">
-    <property name="custom" type="empty">
-      <property name="&lt;Primary&gt;&lt;Shift&gt;p" type="string" value="/usr/local/bin/ribi-screenshot-full"/>
-      <property name="&lt;Primary&gt;&lt;Shift&gt;k" type="string" value="/usr/local/bin/ribi-screenshot-selection"/>
-    </property>
-  </property>
-</channel>
-"""
+        shortcuts_xml = _payload("xfce4-shortcuts.xml")
         shortcut_paths = [
             DIR_ROOTFS / "home/ribi/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml",
             DIR_ROOTFS / "etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml",
@@ -1201,117 +1025,13 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
         os.chown(wallpaper_cfg.parent.parent, 1000, 1000)
         os.chown(wallpaper_cfg.parent.parent.parent, 1000, 1000)
         write_file(DIR_ROOTFS / "etc/X11/xinit/Xsession", direct_xsession, mode=0o755)
-        direct = """#!/bin/sh
-LOG=/tmp/ribi-desktop.log
-printf '[RIBI-DESKTOP] entered\n' >>"$LOG" 2>&1
-printf '[RIBI-DESKTOP] entered uid=%s display=%s\n' "$(id -u)" "${DISPLAY:-}" >/dev/ttyS0 2>/dev/null || true
-export DISPLAY=${DISPLAY:-:0}
-export HOME=/home/ribi
-export USER=ribi
-export LOGNAME=ribi
-export XDG_RUNTIME_DIR=/run/user/1000
-export GTK_ICON_THEME=RibiShapes
-mkdir -p "$XDG_RUNTIME_DIR" "$HOME/Desktop" >>"$LOG" 2>&1
-chown -R 1000:1000 "$XDG_RUNTIME_DIR" "$HOME" >>"$LOG" 2>&1 || true
-printf '[RIBI-DESKTOP] launching terminal\n' >>"$LOG" 2>&1
-printf '[RIBI-DESKTOP] launching terminal\n' >/dev/ttyS0 2>/dev/null || true
-if command -v dbus-run-session >/dev/null 2>&1; then
-    exec dbus-run-session -- xfce4-terminal --disable-server --geometry=90x28+80+80 --title='Ribi OS Desktop' >>"$LOG" 2>&1
-else
-    exec xfce4-terminal --disable-server --geometry=90x28+80+80 --title='Ribi OS Desktop' >>"$LOG" 2>&1
-fi
-"""
+        direct = _payload("ribi-direct-desktop.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-direct-desktop", direct, mode=0o755)
-        user_desktop = """#!/bin/sh
-export DISPLAY=:0 HOME=/home/ribi USER=ribi LOGNAME=ribi XDG_RUNTIME_DIR=/run/user/1000
-mkdir -p "$HOME/.config" "$XDG_RUNTIME_DIR" "$HOME/Pictures/Screenshots"
-xfwm4 --replace >"$HOME/xfwm4.log" 2>&1 &
-sleep 2
-printf '[RIBI-WM] xfwm4 started\n' >/dev/ttyS0 2>/dev/null || true
-xfce4-panel --disable-wm-check >"$HOME/panel.log" 2>&1 &
-printf '[RIBI-PANEL] launch submitted\n' >/dev/ttyS0 2>/dev/null || true
-# The dock is the application entry point. Do not open a carousel of apps at login.
-printf '[RIBI-APPS] dock ready; applications are user-launched\n' >/dev/ttyS0 2>/dev/null || true
-sleep 600
-"""
+        user_desktop = _payload("ribi-user-desktop.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-user-desktop", user_desktop, mode=0o755)
-        openbox_autostart = """#!/bin/sh
-set -eu
-LOG="$HOME/.cache/ribi-autostart.log"
-export DISPLAY=${DISPLAY:-:0}
-export XAUTHORITY=${XAUTHORITY:-/run/ribi/server.auth}
-export GDK_BACKEND=x11
-export GTK_USE_PORTAL=0
-export NO_AT_BRIDGE=1
-export GTK_ICON_THEME=RibiShapes
-export GTK_MODULES=
-export XCURSOR_THEME=Adwaita
-export GIO_USE_VFS=local
-export GSETTINGS_BACKEND=memory
-export XDG_CURRENT_DESKTOP=Ribi
-export XDG_SESSION_DESKTOP=ribi
-mkdir -p "$HOME/.cache" "$HOME/Pictures/Screenshots" "$XDG_RUNTIME_DIR"
-printf '[RIBI-AUTOSTART] uid=%s display=%s\n' "$(id -u)" "$DISPLAY" >>"$LOG" 2>&1
-# Paint only the X root; never create a foreground wallpaper/probe window.
-/usr/local/bin/ribi-wallpaper-viewer >>"$HOME/.cache/ribi-wallpaper.log" 2>&1
-# The dock is the sole graphical autostart client. It remains independent of app exits.
-exec /usr/local/bin/ribi-dock >>"$HOME/.cache/ribi-dock.log" 2>&1
-"""
+        openbox_autostart = _payload("openbox-autostart.sh")
         write_file(DIR_ROOTFS / "home/ribi/.config/openbox/autostart", openbox_autostart, mode=0o755)
-        visible = """#!/bin/sh
-set -eu
-LOG=/tmp/ribi-visible.log
-export DISPLAY=${DISPLAY:-:0}
-export XAUTHORITY=${XAUTHORITY:-/run/ribi/server.auth}
-export HOME=/home/ribi USER=ribi LOGNAME=ribi
-export XDG_RUNTIME_DIR=/run/user/1000 XDG_CURRENT_DESKTOP=Ribi XDG_SESSION_DESKTOP=ribi XDG_SESSION_TYPE=x11
-export XDG_CONFIG_HOME=/home/ribi/.config XDG_CONFIG_DIRS=/etc/xdg
-printf '[RIBI-VISIBLE] entered display=%s uid=%s\\n' "$DISPLAY" "$(id -u)" >>"$LOG" 2>&1
-printf '[RIBI-VISIBLE] launching dbus-run-session openbox-session\\n' >/dev/ttyS0 2>/dev/null || true
-if command -v xrandr >/dev/null 2>&1; then
-    _ribi_xrandr_ok=1
-    _ribi_output=none
-    printf '[RIBI-VISIBLE] xrandr query begin\n' >/dev/ttyS0 2>/dev/null || true
-    xrandr --query >/dev/ttyS0 2>&1 || true
-    # The direct Xorg live path can expose no connected RandR output even
-    # though its virtual framebuffer supports the requested desktop size.
-    # Set the framebuffer first so root-window geometry is truly 1280x800.
-    xrandr --fb 1280x800 >>"$LOG" 2>&1 || true
-    xrandr --fb 1280x800 >/dev/ttyS0 2>&1 || true
-    for _ribi_try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-        _ribi_output=$(xrandr --query 2>>"$LOG" | awk '$2 == "connected" {print $1; exit}')
-        if [ -n "$_ribi_output" ] && xrandr --output "$_ribi_output" --mode 1280x800 >>"$LOG" 2>&1; then
-            xrandr --fb 1280x800 >>"$LOG" 2>&1 || true
-            _ribi_xrandr_ok=0
-            break
-        fi
-        sleep 1
-    done
-    printf '[RIBI-VISIBLE] xrandr mode attempt output=%s\n' "$_ribi_output" >/dev/ttyS0 2>/dev/null || true
-    xrandr --query >/dev/ttyS0 2>&1 || true
-    printf '[RIBI-VISIBLE] xrandr output=%s mode=1280x800 rc=%s\n' "$_ribi_output" "$_ribi_xrandr_ok" >>"$LOG" 2>&1
-fi
-# Phase 9: Ribi WM is the default. RIBI_USE_WM=0 or ribi.wm=0 is an
-# emergency compatibility escape hatch; any startup failure falls back to
-# Openbox instead of leaving a black screen.
-_ribi_use_wm=${RIBI_USE_WM:-1}
-grep -qw 'ribi.wm=0' /proc/cmdline 2>/dev/null && _ribi_use_wm=0 || true
-grep -qw 'ribi.wm=1' /proc/cmdline 2>/dev/null && _ribi_use_wm=1 || true
-if [ "$_ribi_use_wm" = 1 ]; then
-    printf '[RIBI-VISIBLE] default Ribi WM requested\n' >>"$LOG" 2>&1
-    /usr/local/bin/ribi-wm.py >>"$LOG" 2>&1 & _ribi_wm_pid=$!
-    sleep 1
-    if kill -0 "$_ribi_wm_pid" 2>/dev/null; then
-        printf '[RIBI-VISIBLE] Ribi WM active pid=%s\n' "$_ribi_wm_pid" >>"$LOG" 2>&1
-        /usr/local/bin/ribi-wallpaper-viewer >>"$HOME/.cache/ribi-wallpaper.log" 2>&1 &
-        /usr/local/bin/ribi-dock >>"$HOME/.cache/ribi-dock.log" 2>&1 &
-        wait "$_ribi_wm_pid"
-        exit $?
-    fi
-    printf '[RIBI-VISIBLE] Ribi WM failed; falling back to Openbox\n' >>"$LOG" 2>&1
-fi
-exec /usr/bin/dbus-run-session -- /usr/bin/openbox-session >>"$LOG" 2>&1
-"""
+        visible = _payload("ribi-visible-session.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-visible-session", visible, mode=0o755)
         drop_session = """#!/usr/bin/python3
 import os, sys
@@ -1330,45 +1050,7 @@ Type=Application
 DesktopNames=XFCE;Ribi
 """)
 
-        xorg_conf = """Section "Module"
-    Disable "glx"
-EndSection
-Section "ServerFlags"
-    Option "AutoAddDevices" "true"
-    Option "AllowMouseOpenFail" "false"
-    Option "AutoEnableDevices" "true"
-EndSection
-Section "InputClass"
-    Identifier "Ribi libinput pointer"
-    MatchIsPointer "on"
-    Driver "libinput"
-EndSection
-Section "InputClass"
-    Identifier "Ribi libinput keyboard"
-    MatchIsKeyboard "on"
-    Driver "libinput"
-EndSection
-Section "Device"
-    Identifier "Ribi QEMU Video"
-    Driver "modesetting"
-    Option "AccelMethod" "none"
-EndSection
-Section "Monitor"
-    Identifier "Ribi Monitor"
-    Option "PreferredMode" "1280x800"
-EndSection
-Section "Screen"
-    Identifier "Ribi Screen"
-    Device "Ribi QEMU Video"
-    Monitor "Ribi Monitor"
-    DefaultDepth 24
-    SubSection "Display"
-        Depth 24
-        Virtual 1280 800
-        Modes "1280x800"
-    EndSubSection
-EndSection
-"""
+        xorg_conf = _payload("xorg.conf")
         write_file(DIR_ROOTFS / "etc/X11/xorg.conf", xorg_conf)
         xorg_launcher = """#!/bin/sh
 set -u
@@ -1377,31 +1059,7 @@ exec /usr/libexec/Xorg "$@" -logfile /dev/ttyS0 -verbose 3
 """
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-xorg", xorg_launcher, mode=0o755)
 
-        xfce_clients = """#!/bin/sh
-set -eu
-export DISPLAY=${DISPLAY:-:0}
-export HOME=/home/ribi
-export USER=ribi
-export LOGNAME=ribi
-export XDG_CURRENT_DESKTOP=XFCE
-export XDG_SESSION_DESKTOP=xfce
-mkdir -p "$HOME/.config" /run/user/1000
-printf 'RIBI_XFCE_CLIENTS_START uid=%s display=%s\n' "$(id -u)" "$DISPLAY" | tee "$HOME/xfce-session.log" >/dev/ttyS0 2>/dev/null || true
-unset DBUS_SESSION_BUS_ADDRESS
-xfwm4 --replace >>"$HOME/xfwm4.log" 2>&1 & wm_pid=$!
-
-printf 'RIBI_XFCE_PIDS wm=%s\n' "$wm_pid" >/dev/ttyS0 2>/dev/null || true
-sleep 8
-printf 'RIBI_XFCE_STATUS wm=%s desktop=%s panel=%s\n' "$(kill -0 "$wm_pid" 2>/dev/null; echo $?)" "$(kill -0 "$desktop_pid" 2>/dev/null; echo $?)" "$(kill -0 "$panel_pid" 2>/dev/null; echo $?)" >/dev/ttyS0 2>/dev/null || true
-zen-browser --no-sandbox --disable-gpu --no-first-run --user-data-dir="$HOME/.zen-browser" >/home/ribi/zen-browser.log 2>&1 &
-sleep 3
-if ! kill -0 "$wm_pid" 2>/dev/null || ! kill -0 "$desktop_pid" 2>/dev/null || ! kill -0 "$panel_pid" 2>/dev/null; then
-    printf '\033[1;31mXFCE startup failed for ribi\033[0m\n' >/dev/tty1 2>/dev/null || true
-    cat "$HOME/xfwm4.log" "$HOME/xfdesktop.log" "$HOME/xfce4-panel.log" >/dev/tty1 2>/dev/null || true
-    exit 1
-fi
-wait
-"""
+        xfce_clients = _payload("ribi-xfce-clients.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-xfce-clients", xfce_clients, mode=0o755)
         # Alpine packages place Xorg in /usr/bin on some releases and in
         # /usr/libexec on others. The supervisor resolves either location.
@@ -1496,31 +1154,7 @@ exit 127
         # Native DHCP-on-boot helper: prefers dhcpcd if the optional package resolved,
         # otherwise falls back to BusyBox's built-in udhcpc applet (always present),
         # so basic wired/virtio networking comes up without requiring any GUI tool.
-        net_up_script = """#!/bin/sh
-set -u
-failed=0
-for ifc in $(ls /sys/class/net 2>/dev/null | grep -v '^lo$'); do
-    ip link set "$ifc" up 2>/dev/null || { failed=1; continue; }
-    if [ -f /etc/wpa_supplicant/wpa_supplicant.conf ] &&
-       command -v wpa_supplicant >/dev/null 2>&1 &&
-       [ -e "/sys/class/net/$ifc/wireless" ]; then
-        wpa_supplicant -B -i "$ifc" -c /etc/wpa_supplicant/wpa_supplicant.conf 2>/dev/null || failed=1
-        sleep 2
-    fi
-    if command -v dhcpcd >/dev/null 2>&1; then
-        dhcpcd -q "$ifc" 2>/dev/null || failed=1
-    elif command -v udhcpc >/dev/null 2>&1; then
-        udhcpc -i "$ifc" -n -q 2>/dev/null || failed=1
-    else
-        failed=1
-    fi
-done
-# Require an IPv4 address on at least one non-loopback interface when one exists.
-if ls /sys/class/net 2>/dev/null | grep -qv '^lo$' && ! ip -4 addr show scope global 2>/dev/null | grep -q 'inet '; then
-    exit 1
-fi
-exit "$failed"
-"""
+        net_up_script = _payload("ribi-netup.sh")
         write_file(DIR_ROOTFS / "usr/local/sbin/ribi-netup", net_up_script, mode=0o755)
 
         # Register Baseline Network Service
