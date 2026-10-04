@@ -302,7 +302,7 @@ def build_dock() -> Gtk.Window:
 
     window.add(box)
 
-    schedule_tasks(window, taskbar)
+    schedule_tasks(taskbar)
 
     screen = window.get_screen()
     monitor = screen.get_primary_monitor() or 0
@@ -328,7 +328,7 @@ def _clear(container) -> None:
         container.remove(child)
 
 
-def _task_button(window, task, active: bool = False) -> Gtk.Button:
+def _task_button(task, active: bool = False) -> Gtk.Button:
     title = task["title"]
     label = title if len(title) <= 22 else title[:21] + "…"
     button = Gtk.Button()
@@ -364,7 +364,7 @@ def _task_click(event, window_id: str):
     return True
 
 
-def refresh_tasks(window, taskbar) -> None:
+def refresh_tasks(taskbar) -> None:
     """Rebuild the taskbar from the live EWMH window list, off the main loop."""
     if getattr(refresh_tasks, "busy", False):
         return
@@ -381,7 +381,7 @@ def refresh_tasks(window, taskbar) -> None:
             refresh_tasks.busy = False
             _clear(taskbar)
             for task in windows:
-                taskbar.pack_start(_task_button(window, task, task["id"] == active), False, False, 0)
+                taskbar.pack_start(_task_button(task, task["id"] == active), False, False, 0)
             taskbar.show_all()
             return False
 
@@ -390,12 +390,12 @@ def refresh_tasks(window, taskbar) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
-def schedule_tasks(window, taskbar) -> None:
+def schedule_tasks(taskbar) -> None:
     """Refresh the taskbar now and every 2s. The timeout always returns True,
     so the loop cannot stop even if a poll is still in flight (refresh_tasks
     simply skips while one is running)."""
-    refresh_tasks(window, taskbar)
-    GLib.timeout_add_seconds(2, lambda: (refresh_tasks(window, taskbar), True)[1])
+    refresh_tasks(taskbar)
+    GLib.timeout_add_seconds(2, lambda: (refresh_tasks(taskbar), True)[1])
 
 
 def show_menu() -> None:
