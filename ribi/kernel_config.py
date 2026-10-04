@@ -1,0 +1,170 @@
+"""Bespoke Linux kernel configuration profile for Ribi OS.
+
+This module is part of the Ribi OS ISO builder package. Split out of the
+original monolithic builder for readability; behaviour is unchanged.
+"""
+
+
+
+
+def get_bespoke_kernel_config() -> str:
+    """Production Linux kernel configuration with required boot features built-in."""
+    return """
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_X86=y
+CONFIG_OUTPUT_FORMAT="elf64-x86-64"
+CONFIG_SMP=y
+CONFIG_NR_CPUS=64
+CONFIG_PREEMPT_VOLUNTARY=y
+CONFIG_NO_HZ_IDLE=y
+CONFIG_HIGH_RES_TIMERS=y
+CONFIG_ACPI=y
+CONFIG_PCI=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+
+# Boot & Compression Subsystems
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_XZ=y
+CONFIG_RD_GZIP=y
+
+# EFI & Bootloader Handover
+CONFIG_EFI=y
+CONFIG_EFI_STUB=y
+CONFIG_EFI_PARTITION=y
+
+# Block Devices & Virtual Hardware
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_BLK_DEV_LOOP_MIN_COUNT=8
+CONFIG_BLK_DEV_SR=y
+CONFIG_BLK_DEV_SD=y
+CONFIG_CHR_DEV_SG=y
+CONFIG_ATA=y
+CONFIG_SATA_AHCI=y
+CONFIG_ATA_PIIX=y
+CONFIG_BLK_DEV_NVME=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_NET=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_SCSI=y
+CONFIG_SCSI_MOD=y
+
+# Built-in Filesystems
+CONFIG_EXT4_FS=y
+CONFIG_EXT4_FS_POSIX_ACL=y
+CONFIG_EXT4_FS_SECURITY=y
+CONFIG_FAT_FS=y
+CONFIG_MSDOS_FS=y
+CONFIG_VFAT_FS=y
+CONFIG_FAT_DEFAULT_CODEPAGE=437
+CONFIG_FAT_DEFAULT_IOCHARSET="iso8859-1"
+CONFIG_NLS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
+CONFIG_ISO9660_FS=y
+CONFIG_JOLIET=y
+CONFIG_ZISOFS=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_FILE_DIRECT=y
+CONFIG_SQUASHFS_DECOMP_SINGLE=y
+CONFIG_OVERLAY_FS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_PROC_FS=y
+CONFIG_PROC_SYSCTL=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+CONFIG_TMPFS_XATTR=y
+
+# Memory & Namespaces
+CONFIG_MMU=y
+CONFIG_NAMESPACES=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_USER_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+CONFIG_PRINTK=y
+CONFIG_PRINTK_TIME=y
+CONFIG_ELF_CORE=y
+
+# Input & Display Console
+CONFIG_INPUT=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_KEYBOARD_ATKBD=y
+CONFIG_INPUT_MOUSE=y
+CONFIG_MOUSE_PS2=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_FB=y
+CONFIG_FB_EFI=y
+CONFIG_FB_SIMPLE=y
+
+# Core Networking
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_IP_PNP=y
+CONFIG_IP_PNP_DHCP=y
+CONFIG_NETDEVICES=y
+CONFIG_ETHERNET=y
+CONFIG_E1000=y
+CONFIG_E1000E=y
+CONFIG_R8169=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+
+# Kernel modules (allows /lib/modules cache fallback and future extensibility)
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+
+# Pseudo-terminals (required by every terminal emulator, ssh, su -, script, etc.)
+CONFIG_UNIX98_PTYS=y
+
+# USB (keyboard/mouse/storage on real PCs and most VM configurations)
+CONFIG_USB_SUPPORT=y
+CONFIG_USB=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_EHCI_HCD=y
+CONFIG_USB_OHCI_HCD=y
+CONFIG_USB_UHCI_HCD=y
+CONFIG_USB_HID=y
+CONFIG_HID=y
+CONFIG_HID_GENERIC=y
+CONFIG_USB_STORAGE=y
+
+# Graphics: basic DRM/KMS drivers used by common VMs (QEMU/VirtualBox/VMware) and
+# generic VESA/EFI framebuffers for real hardware, so Xorg/XFCE has something to draw on.
+CONFIG_DRM=y
+CONFIG_DRM_BOCHS=y
+CONFIG_DRM_CIRRUS_QEMU=y
+CONFIG_DRM_QXL=y
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_FB_VESA=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+
+# Serial console (useful for QEMU -nographic / headless debugging)
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+
+# Audio (ALSA + common HDA controllers used on real PCs and QEMU ich9/AC97 models)
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_TIMER=y
+CONFIG_SND_PCM=y
+CONFIG_SND_HDA_INTEL=y
+CONFIG_SND_HDA_GENERIC=y
+CONFIG_SND_AC97_CODEC=y
+CONFIG_SND_INTEL8X0=y
+
+# Optional KVM PTP support is not needed by Ribi and emits a distracting
+# "failed to initialize ptp_kvm" message under QEMU/Vectras without a PTP host.
+# Keep generic PTP support, but omit the KVM-specific clock driver.
+# CONFIG_PTP_1588_CLOCK_KVM is not set
+    """

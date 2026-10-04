@@ -1,0 +1,13 @@
+# Build workspace produced by the builder (kept out of version control).
+ribi-build-workspace/
+ribi-os-*.iso
+*.iso
+*.iso.sha256
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
