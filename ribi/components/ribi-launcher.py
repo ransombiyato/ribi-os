@@ -175,9 +175,18 @@ def build_launcher() -> Gtk.Window:
     window.show_all()
     # show_all() alone does not always hand the new window focus under a
     # window manager; present() asks for it, and the search entry must be
-    # focused after mapping (grab_focus before map is dropped).
+    # focused after mapping (grab_focus before map is dropped). Retry on an
+    # idle callback and again shortly after, because Openbox can take a moment
+    # to assign input focus to a freshly mapped override window.
     window.present()
-    GLib.idle_add(lambda: (search.grab_focus(), False)[1])
+    window.set_focus(search)
+
+    def focus_entry():
+        search.grab_focus()
+        return False
+
+    GLib.idle_add(focus_entry)
+    GLib.timeout_add(150, focus_entry)
     return window
 
 
