@@ -172,3 +172,13 @@ def test_polish_payloads_present_and_installed():
     assert "picom" in config.TARGET_APK_PACKAGES_DESKTOP
     assert "lxterminal" in config.TARGET_APK_PACKAGES_DESKTOP
 
+
+def test_launcher_enter_activates_from_search_entry():
+    """The search entry consumes Return, so launch must be wired to it too."""
+    source = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
+    assert 'search.connect("activate"' in source, (
+        "Enter is swallowed by the search entry unless 'activate' is connected"
+    )
+    assert '"launched"' in source, "launcher must guard against double-launching"
+
+

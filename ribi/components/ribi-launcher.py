@@ -124,6 +124,17 @@ def build_launcher() -> Gtk.Window:
     overlay.pack_start(panel, False, False, 0)
     window.add(overlay)
 
+    shown_state = {"entries": [], "launched": False}
+
+    def activate(command: str) -> None:
+        # Return is seen twice (the entry emits "activate" and the key also
+        # reaches the window handler); guard so a launch happens only once.
+        if shown_state["launched"]:
+            return
+        shown_state["launched"] = True
+        run(command)
+        Gtk.main_quit()
+
     def make_tile(name, command, glyph):
         button = Gtk.Button()
         button.get_style_context().add_class("ribi-launcher-tile")
@@ -135,10 +146,8 @@ def build_launcher() -> Gtk.Window:
         label.set_justify(Gtk.Justification.CENTER)
         content.pack_start(label, False, False, 0)
         button.add(content)
-        button.connect("clicked", lambda _b: (run(command), Gtk.main_quit()))
+        button.connect("clicked", lambda _b, c=command: activate(c))
         return button
-
-    shown_state = {"entries": []}
 
     def refresh(*_a):
         for child in grid.get_children():
@@ -150,8 +159,17 @@ def build_launcher() -> Gtk.Window:
             grid.add(make_tile(name, command, glyph))
         grid.show_all()
 
+    def launch_first(*_a):
+        entries = shown_state["entries"]
+        if entries:
+            activate(entries[0][1])
+
     search.connect("changed", refresh)
-    window.connect("key-press-event", lambda _w, e: _on_key(_w, e, shown_state))
+    # The search entry consumes Return and emits "activate", so the window-level
+    # key handler never sees Enter. Wire launch to the entry as well as the
+    # window so Enter works while typing and when focus is elsewhere.
+    search.connect("activate", launch_first)
+    window.connect("key-press-event", lambda _w, e: _on_key(_w, e, launch_first))
 
     refresh()
     window.show_all()
@@ -163,14 +181,11 @@ def build_launcher() -> Gtk.Window:
     return window
 
 
-def _on_key(_widget, event, shown_state):
+def _on_key(_widget, event, launch_first):
     if event.keyval == Gdk.KEY_Escape:
         Gtk.main_quit()
     elif event.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
-        entries = shown_state.get("entries", [])
-        if entries:
-            run(entries[0][1])
-            Gtk.main_quit()
+        launch_first()
     return False
 
 
