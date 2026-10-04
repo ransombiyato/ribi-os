@@ -29,11 +29,17 @@ from .logging_utils import BuildLogger, run_cmd, sha256_file, write_file
 from .sources import SRC_LIVE_INIT, SRC_RIBI_2048, SRC_RIBI_CLI, SRC_RIBI_INIT, SRC_RIBI_INSTALLER, SRC_RIBI_PKG, SRC_RIBI_SETUP, SRC_RIBI_SNAKE, SRC_RIBI_SVC
 
 _PAYLOADS_DIR = Path(__file__).resolve().parent / "payloads"
+_COMPONENTS_DIR = Path(__file__).resolve().parent / "components"
 
 
 def _payload(filename: str) -> str:
     """Load a target-OS payload file staged under ``ribi/payloads/``."""
     return (_PAYLOADS_DIR / filename).read_text(encoding="utf-8")
+
+
+def _component(filename: str) -> Path:
+    """Return the path to a native desktop component under ``ribi/components/``."""
+    return _COMPONENTS_DIR / filename
 
 
 class RibiMasterBuilder:
@@ -967,7 +973,7 @@ X-GNOME-Autostart-enabled=true
         write_file(DIR_ROOTFS / "usr/share/backgrounds/ribi-wallpaper.html", wallpaper_html)
         wallpaper_viewer = _payload("ribi-wallpaper-viewer.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-wallpaper-viewer", wallpaper_viewer, mode=0o755)
-        dock_src = Path(__file__).with_name("ribi-dock.py")
+        dock_src = _component("ribi-dock.py")
         if not dock_src.is_file():
             raise RuntimeError(f"Missing native dock source: {dock_src}")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-dock", dock_src.read_text(), mode=0o755)
@@ -1092,11 +1098,11 @@ exit 127
         write_file(DIR_ROOTFS / "usr/local/bin/ribi", SRC_RIBI_CLI, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-installer", SRC_RIBI_INSTALLER, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-setup", SRC_RIBI_SETUP, mode=0o755)
-        editor_src = Path(__file__).with_name("ribi-code-editor.py")
+        editor_src = _component("ribi-code-editor.py")
         if not editor_src.is_file():
             raise RuntimeError(f"Missing Code Editor source: {editor_src}")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-edit", editor_src.read_text(), mode=0o755)
-        prompt_src = Path(__file__).with_name("ribi-app-prompt.py")
+        prompt_src = _component("ribi-app-prompt.py")
         if not prompt_src.is_file():
             raise RuntimeError(f"Missing app action helper: {prompt_src}")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-app-prompt", prompt_src.read_text(), mode=0o755)
@@ -1201,12 +1207,12 @@ exec /sbin/poweroff -f
         BuildLogger.step(7, self.total_stages, "Synthesizing Native Console Applications")
         apps_dir = DIR_ROOTFS / "usr/share/applications"
         apps_dir.mkdir(parents=True, exist_ok=True)
-        explorer_src = Path(__file__).with_name("ribi-file-explorer.py")
+        explorer_src = _component("ribi-file-explorer.py")
         if not explorer_src.is_file():
             raise RuntimeError(f"Missing native explorer prototype: {explorer_src}")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-file-explorer", explorer_src.read_text(), mode=0o755)
         for native_name in ("ribi-shell.py", "ribi-screenshot.py", "ribi-wm.py", "ribi-control-center.py"):
-            native_src = Path(__file__).with_name(native_name)
+            native_src = _component(native_name)
             if not native_src.is_file():
                 raise RuntimeError(f"Missing native Ribi component: {native_src}")
             write_file(DIR_ROOTFS / "usr/local/bin" / native_name, native_src.read_text(), mode=0o755)

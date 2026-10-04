@@ -74,6 +74,37 @@ def test_cli_exposes_main():
     assert callable(cli.main)
 
 
+REQUIRED_COMPONENTS = [
+    "ribi-dock.py",
+    "ribi-file-explorer.py",
+    "ribi-code-editor.py",
+    "ribi-app-prompt.py",
+    "ribi-screenshot.py",
+    "ribi-shell.py",
+    "ribi-wm.py",
+    "ribi-control-center.py",
+]
+
+
+def test_native_components_present_and_compile():
+    """Every desktop component the builder writes into the OS must exist."""
+    import py_compile
+
+    components = REPO / "ribi" / "components"
+    for name in REQUIRED_COMPONENTS:
+        path = components / name
+        assert path.is_file(), f"missing native component: {name}"
+        py_compile.compile(str(path), doraise=True)
+
+
+def test_builder_loads_components_from_components_dir():
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert "_COMPONENTS_DIR" in source
+    assert 'Path(__file__).with_name("ribi-dock.py")' not in source, (
+        "components must be loaded via _component(), not relative to builder.py"
+    )
+
+
 def test_externalized_payloads_match_original():
     """Desktop/session config payloads must survive the move to ribi/payloads/."""
     names = {
