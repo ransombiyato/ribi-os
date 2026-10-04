@@ -1305,7 +1305,7 @@ exec /sbin/poweroff -f
         desktop_manifest = [
             ("ribi-app-menu.desktop", "Applications", "ribi-app-launcher", "view-app-grid", "System;Utility;", False),
             ("ribi-file-explorer.desktop", "Ribi File Explorer", "ribi-file-explorer %U", "system-file-manager", "System;FileManager;", False),
-            ("ribi-terminal.desktop", "Ribi Terminal", "xterm -title 'Ribi Terminal'", "utilities-terminal", "System;TerminalEmulator;", False),
+            ("ribi-terminal.desktop", "Ribi Terminal", "ribi-terminal", "utilities-terminal", "System;TerminalEmulator;", False),
             ("zen-browser-ribi.desktop", "Zen Browser", "zen-browser %U", "zen-browser", "Network;WebBrowser;", False),
             ("obs-studio-ribi.desktop", "OBS Studio", "obs --disable-shutdown-check", "obs", "AudioVideo;Recorder;", False),
             ("ribi-screenshot.desktop", "Ribi Screenshot", "ribi-screenshot", "camera-photo", "Graphics;Utility;", False),
