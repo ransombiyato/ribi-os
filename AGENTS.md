@@ -88,3 +88,9 @@ Gotchas learned the hard way:
 - **The sysroot cache is keyed by a package-list hash.** `stage_3_*` stores a
   `.sysroot_packages` signature next to `.sysroot_ready`; adding a package to
   `config.py` invalidates and rebuilds the sysroot automatically.
+- **An Openbox theme needs its button glyphs.** A theme dir with only a
+  `themerc` is silently rejected (`Unable to load the theme 'Ribi'`) and Openbox
+  falls back to Clearlooks, so titlebars stay light. `builder.py` copies the
+  stock `*.xbm` glyphs from `Bear2`/`Default` into `usr/share/themes/Ribi/openbox-3`
+  and the themerc only recolours them; use `Flat Solid` title fills so the
+  colour matches the Ribi tokens exactly.
