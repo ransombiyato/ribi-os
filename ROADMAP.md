@@ -13,9 +13,10 @@ Status legend: `[x]` done, `[~]` in progress, `[ ]` planned.
 
 - [x] Split the 5092-line monolith into readable modules (`ribi/`).
 - [x] Externalize the 10 embedded target scripts into `ribi/sources/`.
+- [x] Externalize the desktop/session config into `ribi/payloads/`.
 - [x] Bundle the desktop wallpaper as a real asset.
 - [x] Preserve the original CLI and behaviour (verified equivalent).
-- [ ] Add automated tests that pin build-time behaviour (imports, APK
+- [x] Add automated tests that pin build-time behaviour (imports, APK
       resolution, ELF audit, source round-trip).
 
 ## Phase 1 - Boot reliability and build quality
@@ -28,7 +29,7 @@ The OS must boot every time, on real hardware and in VMs.
       require a full rebuild.
 - [ ] Speed up builds: parallel package extraction, optional ccache for the
       kernel, cached squashfs when inputs are unchanged.
-- [ ] Add GitHub Actions: build the ISO, upload it as an artifact, and run a
+- [x] Add GitHub Actions: build the ISO, upload it as an artifact, and run a
       QEMU boot-test (BIOS + UEFI) on every push.
 - [ ] Emit a build manifest (kernel version, package versions, hashes) inside
       the ISO and next to it.
