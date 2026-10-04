@@ -121,7 +121,11 @@ def _xprop(window_id: str, field: str) -> str:
     if "=" not in out:
         return ""
     value = out.split("=", 1)[1].strip()
-    return "" if value in ("", "0x0", '""') else value
+    # xprop prints strings as `_NET_WM_NAME(UTF8_STRING) = "Title"`; drop the
+    # quoting so the taskbar shows the title, not `"Title"`.
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        value = value[1:-1]
+    return "" if value in ("", "0x0") else value
 
 
 def _window_class(window_id: str) -> str:
@@ -192,8 +196,11 @@ def window_action(window_id: str, action: str) -> None:
     elif action == "close":
         _xdo("windowclose", window_id)
     elif action == "maximize":
-        _xdo("windowsize", window_id, "100%", "100%")
-        _xdo("windowmove", window_id, "0", "0")
+        # Ask the window manager to maximise via EWMH so it accounts for its own
+        # decorations; a raw resize leaves the frame hanging off-screen.
+        if not _xdo("windowstate", "--add", "MAXIMIZED_VERT", "MAXIMIZED_HORZ", window_id):
+            _xdo("windowsize", window_id, "100%", "100%")
+            _xdo("windowmove", window_id, "0", "0")
     elif action == "restore":
         _activate_window(window_id)
     else:

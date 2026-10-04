@@ -173,6 +173,9 @@ def test_obs_defaults_use_crash_safe_muxer():
     """OBS must not default to the hybrid MP4 muxer that segfaulted."""
     source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
     assert "RecFormat2=mkv" in source, "OBS should default to the mkv muxer"
+    # FirstRun=true would launch OBS's auto-config wizard and overwrite the
+    # MKV recording format we ship, so it must be disabled.
+    assert "FirstRun=false" in source, "OBS first-run wizard must be disabled"
 
 
 def test_v4l2_runtime_is_installed_for_obs():
@@ -205,6 +208,19 @@ def test_dock_has_open_window_taskbar():
                    "xdotool", "getactivewindow", "windowminimize", "windowclose"):
         assert marker in dock, f"dock taskbar missing {marker}"
     assert "threading.Thread" in dock, "window polling must not block the GTK loop"
+
+
+def test_dock_strips_xprop_string_quoting():
+    """Taskbar titles came out as literal `"Title"`; xprop quotes string values."""
+    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
+    assert 'value[0] == \'"\'' in dock, "xprop string values must be unquoted"
+
+
+def test_dock_maximise_uses_ewmh_state():
+    """A raw resize left the frame off-screen; maximise must go through the WM."""
+    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
+    assert "windowstate" in dock and "MAXIMIZED_VERT" in dock, \
+        "maximise must request the EWMH maximised state"
 
 
 def test_live_squashfs_uses_xz():

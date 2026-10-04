@@ -154,4 +154,26 @@ Gotchas learned the hard way:
   the EWMH window list with `xdotool`/`xprop` on a worker thread and applies the
   result on an idle callback. Never call those tools synchronously from the main
   loop: the panel freezes while an app is busy starting.
+- **`xprop` prints string properties with surrounding quotes.** A taskbar built
+  straight from `xprop -id <id> _NET_WM_NAME` shows `"Title"` with literal quote
+  characters. `_xprop` in `ribi-dock.py` strips a leading/trailing `"`; keep that
+  when reading any string property (`WM_NAME`, `_NET_WM_NAME`).
+- **Maximise must go through the window manager.** Resizing a window to
+  `100% 100%` at `0,0` leaves Openbox's frame hanging off-screen. Use the EWMH
+  state (`xdotool windowstate --add MAXIMIZED_VERT MAXIMIZED_HORZ`) so the WM
+  accounts for decorations.
+- **Verify compositor changes with the real config, not by eye.** The opacity
+  regression is easy to reproduce headlessly: run Xvfb + openbox + the shipped
+  `ribi-picom.conf` + picom, open two white windows, focus one, and compare the
+  mean brightness of each window from a root screendump. Fixed config gives a
+  ratio of ~1.0 (both ~0.93); the old options (`unredir-if-possible = true`,
+  `inactive-opacity = 0.97`) render both windows at ~0.026 (black).
+- **`ribi.serial=1` replaces the GUI, it does not accompany it.** `/sbin/ribi-init`
+  uses `if ribi.serial=1 … elif … GUI`, so a serial-console boot gives a root
+  shell on `ttyS0` and never starts Xorg. To inspect the desktop, boot normally
+  and use the QEMU monitor `screendump`, or start Xorg by hand in the serial
+  shell.
+- **OBS's `FirstRun` must stay `false`.** With `FirstRun=true` OBS launches its
+  auto-configuration wizard on first start, which re-detects the encoder and
+  container and discards the shipped `RecFormat2=mkv` fix.
 

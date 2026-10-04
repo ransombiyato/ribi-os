@@ -1301,9 +1301,12 @@ exec /sbin/poweroff -f
         # and needs no fragmented-MP4 path, so ship a profile that selects it.
         # The audio encoder is left at OBS's default; only the container changes.
         obs_base = DIR_ROOTFS / "home/ribi/.config/obs-studio"
+        # FirstRun=false skips OBS's auto-configuration wizard, which would
+        # otherwise re-detect the encoder/container on first launch and discard
+        # the MKV recording format set below.
         write_file(obs_base / "global.ini", """[General]
 EnableAutoUpdates=false
-FirstRun=true
+FirstRun=false
 SafeMode=false
 
 [Basic]
