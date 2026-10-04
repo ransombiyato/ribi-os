@@ -34,16 +34,16 @@ APP_ID = "ribi-launcher"
 # (name, exec, glyph, keywords) - the curated catalog the launcher searches.
 CATALOG = [
     ("Files", "ribi-file-explorer", "files", "explorer home folders browse"),
-    ("Terminal", "xterm -title Ribi\\ Terminal", "terminal", "shell console command"),
+    ("Terminal", "ribi-terminal", "terminal", "shell console command"),
     ("Zen Browser", "zen-browser", "zen", "web internet browser"),
     ("Code Editor", "ribi-edit", "editor", "text code write"),
     ("Screenshot", "ribi-screenshot", "screenshot", "capture screen image"),
     ("Control Center", "ribi-control-center.py", "control", "settings preferences system"),
     ("OBS Studio", "obs --disable-shutdown-check", "obs", "record stream video"),
-    ("Snake", "xterm -e ribi-snake", "games", "game play"),
-    ("2048", "xterm -e ribi-2048", "games", "game play puzzle"),
+    ("Snake", "ribi-terminal -e ribi-snake", "games", "game play"),
+    ("2048", "ribi-terminal -e ribi-2048", "games", "game play puzzle"),
     ("Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "install", "installer disk setup"),
-    ("Ribi Setup", "xterm -hold -e /usr/local/bin/ribi-setup", "control", "first boot welcome"),
+    ("Ribi Setup", "ribi-terminal -e /usr/local/bin/ribi-setup", "control", "first boot welcome"),
 ]
 
 LAUNCHER_CSS = """

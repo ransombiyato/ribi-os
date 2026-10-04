@@ -94,3 +94,13 @@ Gotchas learned the hard way:
   stock `*.xbm` glyphs from `Bear2`/`Default` into `usr/share/themes/Ribi/openbox-3`
   and the themerc only recolours them; use `Flat Solid` title fills so the
   colour matches the Ribi tokens exactly.
+- **Picom holds the composite selection.** Only one compositor can run per X
+  server; a second `picom` exits with `Another composite manager is already
+  running`. That message is the positive signal that compositing (shadows,
+  rounded corners, fading from `etc/xdg/ribi/picom.conf`) is active. `ribi-wm.py`
+  starts it before Openbox and stops it on exit.
+- **Terminal palette lives in X resources, not app-defaults.** xterm/lxterminal
+  read `/etc/X11/Xresources/ribi` via `xrdb -merge` (done in `ribi-wm.py`), so
+  they match the Ribi tokens without replacing the stock `XTerm` app-defaults.
+  `usr/local/bin/ribi-terminal` prefers lxterminal and falls back to xterm.
+

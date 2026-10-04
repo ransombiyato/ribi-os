@@ -177,6 +177,7 @@ TARGET_APK_PACKAGES_AUDIO = [
 TARGET_APK_PACKAGES_DESKTOP = [
     "openbox", "xterm", "xmessage", "feh", "xdotool", "xorg-server", "xauth", "dbus", "dbus-x11", "xinit", "xf86-video-vesa", "xf86-input-libinput", "xf86-input-evdev",
     "mesa-dri-gallium", "font-dejavu", "libxft", "python3", "py3-gobject3", "py3-cairo", "gtk+3.0", "gdk-pixbuf-loaders", "glycin-loaders-all", "glycin-image-rs", "xrandr",
+    "picom", "lxterminal",
 ]
 TARGET_APK_PACKAGES_APPS = ["gcompat", "obs-studio"]
 

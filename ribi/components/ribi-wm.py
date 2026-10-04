@@ -46,9 +46,10 @@ def session_env() -> dict:
 def start_compositor(env: dict) -> subprocess.Popen | None:
     if os.environ.get("RIBI_NO_COMPOSITOR") == "1":
         return None
+    config = "/etc/xdg/ribi/picom.conf"
     for name, args in (
-        ("picom", ["picom", "--backend", "xrender", "--shadow", "--fading"]),
-        ("compton", ["compton", "--backend", "xrender"]),
+        ("picom", ["picom", "--config", config]),
+        ("compton", ["compton", "--config", config]),
     ):
         if shutil.which(name):
             try:
@@ -61,6 +62,23 @@ def start_compositor(env: dict) -> subprocess.Popen | None:
             except OSError as exc:
                 log(f"compositor failed: {name}: {exc}")
     return None
+
+
+def load_xresources(env: dict) -> None:
+    """Merge the Ribi terminal palette into the X server's resource database."""
+    if not shutil.which("xrdb"):
+        return
+    for path in ("/etc/X11/Xresources/ribi", os.path.expanduser("~/.Xresources")):
+        if os.path.isfile(path):
+            try:
+                with open(path, "rb") as handle:
+                    subprocess.run(
+                        ["xrdb", "-merge", "-"], env=env, stdin=handle,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+                    )
+                log(f"xresources loaded: {path}")
+            except OSError as exc:
+                log(f"xresources failed: {path}: {exc}")
 
 
 def choose_wm() -> list | None:
@@ -76,6 +94,7 @@ def main() -> int:
         return 1
     env = session_env()
     log("starting session window manager")
+    load_xresources(env)
     compositor = start_compositor(env)
 
     wm = choose_wm()

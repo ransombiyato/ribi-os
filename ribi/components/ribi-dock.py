@@ -37,7 +37,7 @@ LOG = os.path.join(os.path.expanduser("~"), ".cache", "ribi-dock.log")
 # key -> (label, command, glyph)
 APPS = [
     ("files", "Files", "ribi-file-explorer", "files"),
-    ("terminal", "Terminal", "xterm -title Ribi\\ Terminal", "terminal"),
+    ("terminal", "Terminal", "ribi-terminal", "terminal"),
     ("zen", "Zen Browser", "zen-browser", "zen"),
     ("editor", "Editor", "ribi-edit", "editor"),
     ("screenshot", "Screenshot", "ribi-screenshot", "screenshot"),

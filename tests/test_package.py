@@ -145,3 +145,30 @@ def test_externalized_payloads_match_original():
     for var, filename in names.items():
         got = (payloads / filename).read_text(encoding="utf-8")
         assert got == want[var], f"payload {var} ({filename}) changed during externalization"
+
+
+def test_polish_payloads_present_and_installed():
+    """Desktop polish added on top of the split must ship and be wired in."""
+    from ribi import config
+
+    payloads = REPO / "ribi" / "payloads"
+    for filename in (
+        "openbox-ribi-themerc",
+        "ribi-Xresources",
+        "ribi-picom.conf",
+        "ribi-terminal.sh",
+    ):
+        assert (payloads / filename).is_file(), f"missing polish payload: {filename}"
+
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    for marker in (
+        'openbox-ribi-themerc',
+        'ribi-Xresources',
+        'ribi-picom.conf',
+        'ribi-terminal.sh',
+    ):
+        assert marker in source, f"builder does not install {marker}"
+
+    assert "picom" in config.TARGET_APK_PACKAGES_DESKTOP
+    assert "lxterminal" in config.TARGET_APK_PACKAGES_DESKTOP
+

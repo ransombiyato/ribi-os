@@ -1,0 +1,30 @@
+! Ribi OS terminal palette. Loaded by the session with `xrdb -merge` and
+! picked up by xterm, lxterminal and other X clients.
+*foreground:   #e6ebf5
+*background:   #0e1118
+*cursorColor:  #39c5ff
+
+*color0:  #0e1118
+*color1:  #ff6b81
+*color2:  #5dd39e
+*color3:  #f7c948
+*color4:  #39c5ff
+*color5:  #b48ead
+*color6:  #56b6c2
+*color7:  #c9d2e3
+*color8:  #2a3242
+*color9:  #ff8799
+*color10: #7ce3b3
+*color11: #ffd97a
+*color12: #63d2ff
+*color13: #c9a4e0
+*color14: #7fd4de
+*color15: #e6ebf5
+
+XTerm*faceName: DejaVu Sans Mono
+XTerm*faceSize: 11
+XTerm*saveLines: 5000
+XTerm*scrollBar: false
+XTerm*rightScrollBar: false
+XTerm*utf8: 2
+XTerm*metaSendsEscape: true

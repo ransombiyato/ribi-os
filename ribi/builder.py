@@ -1059,6 +1059,12 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
                 for glyph in button_src.glob("*.xbm"):
                     shutil.copy2(glyph, openbox_theme_dir / glyph.name)
                 break
+        # Terminal + X client palette so xterm/lxterminal match the Ribi tokens.
+        write_file(DIR_ROOTFS / "etc/X11/Xresources/ribi", _payload("ribi-Xresources"))
+        # Compositor config: shadows, rounded corners and fading on top of Openbox.
+        write_file(DIR_ROOTFS / "etc/xdg/ribi/picom.conf", _payload("ribi-picom.conf"))
+        # Terminal front-end: prefers lxterminal, falls back to xterm.
+        write_file(DIR_ROOTFS / "usr/local/bin/ribi-terminal", _payload("ribi-terminal.sh"), mode=0o755)
         # Patch the shipped keymap: inject the launcher shortcuts and point the
         # theme at Ribi. The stock bindings are kept, so only these keys change.
         openbox_rc = DIR_ROOTFS / "etc/xdg/openbox/rc.xml"
