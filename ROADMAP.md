@@ -51,9 +51,9 @@ Target: a cohesive, modern desktop that feels intentional, not assembled.
 - [~] Design system: one font family, one icon set, one accent color, and a
       consistent dark/light theme across every app. Shared tokens + base CSS in
       `ribi/components/ribi_theme.py`; apps apply it via `ribi_theme.apply_theme`.
-- [ ] Compositing window manager (picom) for shadows, rounded corners, and
-      smooth transparency. (`ribi-wm.py` already tries picom/compton; neither
-      is shipped yet.)
+- [x] Compositing window manager (picom) for shadows, rounded corners, and
+      smooth transparency. `picom` is shipped with `etc/xdg/ribi/picom.conf`
+      and started by `ribi-wm.py` before Openbox.
 - [~] A real panel/dock: application menu, open-window list, system tray,
       clock/calendar, and status indicators (network, volume, battery).
       Native Cairo-drawn dock landed (menu, quick launch, clock, volume/battery
