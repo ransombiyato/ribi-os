@@ -1046,9 +1046,21 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-user-desktop", user_desktop, mode=0o755)
         openbox_autostart = _payload("openbox-autostart.sh")
         write_file(DIR_ROOTFS / "home/ribi/.config/openbox/autostart", openbox_autostart, mode=0o755)
-        # Add a Super/Windows-key launcher binding to Openbox's shipped keymap.
-        # The default rc.xml is patched (not replaced) so the stock window-manager
-        # bindings survive; only the launcher shortcuts are injected.
+        # Ship a Ribi-coloured window decoration theme so titlebars, menus and
+        # OSD match the native dark apps instead of the stock light Clearlooks.
+        openbox_theme_dir = DIR_ROOTFS / "usr/share/themes/Ribi/openbox-3"
+        openbox_theme_dir.mkdir(parents=True, exist_ok=True)
+        write_file(openbox_theme_dir / "themerc", _payload("openbox-ribi-themerc"))
+        # Openbox rejects a theme whose button image files are missing, so copy
+        # the stock xbm glyphs in; the themerc above recolours them.
+        for stock_theme in ("Bear2", "Default"):
+            button_src = DIR_ROOTFS / f"usr/share/themes/{stock_theme}/openbox-3"
+            if button_src.is_dir():
+                for glyph in button_src.glob("*.xbm"):
+                    shutil.copy2(glyph, openbox_theme_dir / glyph.name)
+                break
+        # Patch the shipped keymap: inject the launcher shortcuts and point the
+        # theme at Ribi. The stock bindings are kept, so only these keys change.
         openbox_rc = DIR_ROOTFS / "etc/xdg/openbox/rc.xml"
         if openbox_rc.is_file():
             rc_text = openbox_rc.read_text(encoding="utf-8")
@@ -1073,7 +1085,13 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
             )
             if anchor in rc_text:
                 rc_text = rc_text.replace(anchor, anchor + launcher_binds, 1)
-                openbox_rc.write_text(rc_text, encoding="utf-8")
+            rc_text = re.sub(
+                r"(<theme>\s*<name>)[^<]*(</name>)",
+                r"\g<1>Ribi\g<2>",
+                rc_text,
+                count=1,
+            )
+            openbox_rc.write_text(rc_text, encoding="utf-8")
         visible = _payload("ribi-visible-session.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-visible-session", visible, mode=0o755)
         drop_session = """#!/usr/bin/python3

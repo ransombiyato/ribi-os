@@ -1,0 +1,81 @@
+!# Ribi - the native window decoration theme for Ribi OS.
+!# Colours mirror ribi/components/ribi_theme.py TOKENS (bg #0e1118,
+!# surface #161b26, surface_alt #1d2431, text #e6ebf5, accent #39c5ff).
+!# Button glyphs reuse the stock Openbox xbm set installed alongside it.
+
+border.width: 1
+padding.width: 6
+padding.height: 3
+window.handle.width: 0
+window.client.padding.width: 0
+*.justify: center
+*.font: shadow=n
+
+!# No bevel highlight/shadow so title colours match the Ribi tokens exactly.
+*.bg.highlight: 0
+*.bg.shadow: 0
+
+!# Active window ------------------------------------------------------------
+window.active.border.color: #0b0e14
+window.active.title.bg: Flat Solid
+window.active.title.bg.color: #1d2431
+window.active.title.bg.colorTo: #161b26
+window.active.title.separator.color: #2a3444
+window.active.label.bg: parentrelative
+window.active.label.text.color: #e6ebf5
+
+window.active.button.*.bg: parentrelative
+window.active.button.*.image.color: #9fb0c8
+window.active.button.*.bg.border.color: #2a3444
+window.active.button.hover.bg: Flat solid
+window.active.button.hover.bg.color: #39c5ff
+window.active.button.hover.image.color: #0e1118
+window.active.button.pressed.bg: Flat solid
+window.active.button.pressed.bg.color: #1b7fb0
+window.active.button.pressed.image.color: #0e1118
+
+!# Inactive window ----------------------------------------------------------
+window.inactive.border.color: #0b0e14
+window.inactive.title.bg: Flat Solid
+window.inactive.title.bg.color: #12161f
+window.inactive.title.bg.colorTo: #0e1118
+window.inactive.title.separator.color: #1c2331
+window.inactive.label.bg: parentrelative
+window.inactive.label.text.color: #6b7891
+
+window.inactive.button.*.bg: parentrelative
+window.inactive.button.*.image.color: #55627a
+window.inactive.button.*.bg.border.color: #1c2331
+
+!# Menus (right-click desktop, window menus) --------------------------------
+menu.border.color: #2a3444
+menu.border.width: 1
+menu.overlap: 2
+menu.items.bg: Flat solid
+menu.items.bg.color: #161b26
+menu.items.text.color: #e6ebf5
+menu.items.disabled.text.color: #6b7891
+menu.title.bg: Flat solid
+menu.title.bg.color: #1d2431
+menu.title.text.color: #e6ebf5
+menu.items.active.bg: Flat solid
+menu.items.active.bg.color: #39c5ff
+menu.items.active.text.color: #0e1118
+menu.separator.width: 1
+menu.separator.padding.width: 0
+menu.separator.padding.height: 3
+menu.separator.color: #2a3444
+
+!# On-screen display (window switcher, move/resize popups) ------------------
+osd.border.width: 1
+osd.border.color: #2a3444
+osd.bg: Flat solid
+osd.bg.color: #161b26
+osd.active.label.bg: parentrelative
+osd.active.label.text.color: #39c5ff
+osd.inactive.label.bg: parentrelative
+osd.inactive.label.text.color: #9fb0c8
+osd.hilight.bg: Flat solid
+osd.hilight.bg.color: #39c5ff
+osd.unhilight.bg: Flat solid
+osd.unhilight.bg.color: #1d2431
