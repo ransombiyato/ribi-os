@@ -48,13 +48,18 @@ The OS must boot every time, on real hardware and in VMs.
 
 Target: a cohesive, modern desktop that feels intentional, not assembled.
 
-- [ ] Design system: one font family, one icon set, one accent color, and a
-      consistent dark/light theme across every app.
+- [~] Design system: one font family, one icon set, one accent color, and a
+      consistent dark/light theme across every app. Shared tokens + base CSS in
+      `ribi/components/ribi_theme.py`; apps apply it via `ribi_theme.apply_theme`.
 - [ ] Compositing window manager (picom) for shadows, rounded corners, and
-      smooth transparency.
-- [ ] A real panel/dock: application menu, open-window list, system tray,
+      smooth transparency. (`ribi-wm.py` already tries picom/compton; neither
+      is shipped yet.)
+- [~] A real panel/dock: application menu, open-window list, system tray,
       clock/calendar, and status indicators (network, volume, battery).
-- [ ] Application launcher with search (replaces the plain menu).
+      Native Cairo-drawn dock landed (menu, quick launch, clock, volume/battery
+      tray); open-window list still to do.
+- [x] Application launcher with search (replaces the plain menu).
+      `ribi-launcher.py` - centred overlay, live filtering, Enter/Esc, Cairo icons.
 - [ ] Notifications with a daemon and a small popup theme.
 - [ ] Lock screen and login greeter.
 - [ ] Settings app: display, sound, network, appearance, users, power.

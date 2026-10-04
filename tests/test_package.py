@@ -83,6 +83,8 @@ REQUIRED_COMPONENTS = [
     "ribi-shell.py",
     "ribi-wm.py",
     "ribi-control-center.py",
+    "ribi-launcher.py",
+    "ribi_theme.py",
 ]
 
 

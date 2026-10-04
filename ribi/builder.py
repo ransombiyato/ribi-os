@@ -97,6 +97,10 @@ class RibiMasterBuilder:
     def stage_3_acquire_x86_64_bootstrap(self):
         BuildLogger.step(3, self.total_stages, "C.I.C. x86_64 Userspace Bootstrap Sysroot & Python 3")
         marker = DIR_X86_SYSROOT / ".sysroot_ready"
+        pkg_marker = DIR_X86_SYSROOT / ".sysroot_packages"
+        pkg_signature = hashlib.sha256(
+            "\n".join(sorted(TARGET_APK_PACKAGES)).encode("utf-8")
+        ).hexdigest()
         if marker.exists():
             # Do not trust a stale marker from an interrupted/older build.  In
             # particular, the Alpine minirootfs provides BusyBox applet links,
@@ -109,12 +113,15 @@ class RibiMasterBuilder:
             for name in required_standalone:
                 if not self.find_x86_64_binary(name, [DIR_X86_SYSROOT]):
                     stale.append(name)
+            cached_signature = pkg_marker.read_text().strip() if pkg_marker.is_file() else ""
+            if cached_signature != pkg_signature:
+                stale.append("package-list-changed")
             if not stale:
                 BuildLogger.cic("CHECK", "x86_64 Bootstrap Sysroot", "EXISTS (Ready)")
                 return
             BuildLogger.warn(
                 "Cached x86_64 Bootstrap Sysroot is incomplete; rebuilding package staging "
-                f"because standalone binaries are missing: {stale}"
+                f"because: {stale}"
             )
             marker.unlink(missing_ok=True)
 
@@ -206,6 +213,7 @@ class RibiMasterBuilder:
         missing=[n for n in required_standalone if not self.find_x86_64_binary(n,[DIR_X86_SYSROOT])]
         if missing:
             raise RuntimeError(f"x86_64 sysroot verification failed; missing genuine ELF tools: {missing}")
+        pkg_marker.write_text(pkg_signature + "\n")
         marker.touch()
         BuildLogger.cic("CONTINUE", "x86_64 Bootstrap Sysroot", "VERIFIED & STAGED")
 
@@ -996,8 +1004,9 @@ X-GNOME-Autostart-enabled=true
                 subprocess.run(["convert", str(source), "-background", "none", "-resize", "48x48", str(dock_icons / f"{kind}.xpm")], check=False)  # keep transparency: dock fills it per-tile
 
         # Keep the historical launcher path as a compatibility shim; the desktop
-        # now uses the native dock and never imports GTK for the app menu.
-        write_file(DIR_ROOTFS / "usr/local/bin/ribi-app-launcher", "#!/bin/sh\nexec /usr/local/bin/ribi-dock --menu\n", mode=0o755)
+        # now uses the searchable native launcher and never imports GTK for the
+        # app menu.
+        write_file(DIR_ROOTFS / "usr/local/bin/ribi-app-launcher", "#!/bin/sh\nexec /usr/local/bin/ribi-launcher\n", mode=0o755)
         gtk_probe_py = _payload("ribi-gtk-probe.py")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-gtk-probe", gtk_probe_py, mode=0o755)
         handoff_py = _payload("ribi-user-handoff.py")
@@ -1037,6 +1046,34 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-user-desktop", user_desktop, mode=0o755)
         openbox_autostart = _payload("openbox-autostart.sh")
         write_file(DIR_ROOTFS / "home/ribi/.config/openbox/autostart", openbox_autostart, mode=0o755)
+        # Add a Super/Windows-key launcher binding to Openbox's shipped keymap.
+        # The default rc.xml is patched (not replaced) so the stock window-manager
+        # bindings survive; only the launcher shortcuts are injected.
+        openbox_rc = DIR_ROOTFS / "etc/xdg/openbox/rc.xml"
+        if openbox_rc.is_file():
+            rc_text = openbox_rc.read_text(encoding="utf-8")
+            launcher_binds = (
+                '  <keybind key="W-space">\n'
+                '    <action name="Execute"><command>/usr/local/bin/ribi-launcher</command></action>\n'
+                '  </keybind>\n'
+                '  <keybind key="W-S-d">\n'
+                '    <action name="Execute"><command>/usr/local/bin/ribi-launcher</command></action>\n'
+                '  </keybind>\n'
+            )
+            anchor = "  <chainQuitKey>C-g</chainQuitKey>\n"
+            # Rebuilds reuse the extracted rootfs, so strip any launcher binding
+            # from a previous run before injecting; otherwise the guard below
+            # would keep a stale (possibly conflicting) shortcut forever.
+            rc_text = re.sub(
+                r'[ \t]*<keybind key="[^"]*">\s*'
+                r'<action name="Execute"><command>/usr/local/bin/ribi-launcher</command></action>\s*'
+                r'</keybind>\n',
+                "",
+                rc_text,
+            )
+            if anchor in rc_text:
+                rc_text = rc_text.replace(anchor, anchor + launcher_binds, 1)
+                openbox_rc.write_text(rc_text, encoding="utf-8")
         visible = _payload("ribi-visible-session.sh")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-visible-session", visible, mode=0o755)
         drop_session = """#!/usr/bin/python3
@@ -1211,12 +1248,17 @@ exec /sbin/poweroff -f
         if not explorer_src.is_file():
             raise RuntimeError(f"Missing native explorer prototype: {explorer_src}")
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-file-explorer", explorer_src.read_text(), mode=0o755)
-        for native_name in ("ribi-shell.py", "ribi-screenshot.py", "ribi-wm.py", "ribi-control-center.py"):
+        for native_name in ("ribi-shell.py", "ribi-screenshot.py", "ribi-wm.py", "ribi-control-center.py", "ribi-launcher.py"):
             native_src = _component(native_name)
             if not native_src.is_file():
                 raise RuntimeError(f"Missing native Ribi component: {native_src}")
             write_file(DIR_ROOTFS / "usr/local/bin" / native_name, native_src.read_text(), mode=0o755)
+        theme_src = _component("ribi_theme.py")
+        if not theme_src.is_file():
+            raise RuntimeError(f"Missing Ribi GTK theme helper: {theme_src}")
+        write_file(DIR_ROOTFS / "usr/local/bin/ribi_theme.py", theme_src.read_text(), mode=0o644)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-screenshot", '#!/bin/sh\nexec /usr/local/bin/ribi-screenshot.py "$@"\n', mode=0o755)
+        write_file(DIR_ROOTFS / "usr/local/bin/ribi-launcher", '#!/bin/sh\nexec /usr/local/bin/ribi-launcher.py "$@"\n', mode=0o755)
 
         desktop_manifest = [
             ("ribi-app-menu.desktop", "Applications", "ribi-app-launcher", "view-app-grid", "System;Utility;", False),

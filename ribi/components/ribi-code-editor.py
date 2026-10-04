@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 """ribi-edit - a lightweight GTK3 text and code editor for Ribi OS.
 
-Uses GtkSourceView when available (syntax highlighting, line numbers) and
-falls back to a plain monospace Gtk.TextView otherwise, so it always runs on a
-minimal GTK3 stack. Supports open/save/save-as, find, and a live status bar.
+Uses GtkSourceView when available (syntax highlighting, line numbers) and falls
+back to a plain monospace Gtk.TextView otherwise. Toolbar icons are Cairo-drawn
+so no icon theme or image loader is required.
 """
 
 import os
@@ -13,7 +13,7 @@ try:
     import gi
 
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gdk, Gtk
+    from gi.repository import Gtk
 
     try:
         gi.require_version("GtkSource", "3.0")
@@ -26,6 +26,10 @@ except Exception as exc:  # pragma: no cover
     sys.stderr.write(f"[ribi-edit] GTK unavailable: {exc}\n")
     raise SystemExit(1)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "/usr/local/bin")
+import ribi_theme  # noqa: E402
+
 CSS = """
 #ribi-edit-status { font-size: 11px; color: #9fb0c8; padding: 2px 6px; }
 """
@@ -36,6 +40,8 @@ class Editor(Gtk.Window):
         super().__init__(title="Ribi Editor")
         self.set_default_size(900, 620)
         self.connect("destroy", Gtk.main_quit)
+        ribi_theme.prefer_dark()
+        ribi_theme.apply_css(self, ribi_theme.base_css() + CSS)
         self.path = ""
 
         header = Gtk.HeaderBar()
@@ -43,21 +49,17 @@ class Editor(Gtk.Window):
         header.set_title("Ribi Editor")
         self.set_titlebar(header)
 
-        open_button = Gtk.Button.new_from_icon_name("document-open", Gtk.IconSize.BUTTON)
-        save_button = Gtk.Button.new_from_icon_name("document-save", Gtk.IconSize.BUTTON)
-        save_as_button = Gtk.Button.new_from_icon_name("document-save-as", Gtk.IconSize.BUTTON)
-        find_button = Gtk.Button.new_from_icon_name("edit-find", Gtk.IconSize.BUTTON)
+        open_button = ribi_theme.icon_button("open", tooltip="Open", size=18)
+        save_button = ribi_theme.icon_button("save", tooltip="Save", size=18)
+        find_button = ribi_theme.icon_button("find", tooltip="Find", size=18)
         open_button.connect("clicked", lambda _b: self.open_dialog())
         save_button.connect("clicked", lambda _b: self.save())
-        save_as_button.connect("clicked", lambda _b: self.save_as())
         find_button.connect("clicked", lambda _b: self.find())
-        for widget in (open_button, save_button, save_as_button, find_button):
+        for widget in (open_button, save_button, find_button):
             header.pack_start(widget)
 
         if HAS_SOURCE:
             self.buffer = GtkSource.Buffer()
-            manager = GtkSource.LanguageManager.get_default()
-            self.buffer.set_language(manager.guess_language(None, None))
             self.view = GtkSource.View.new_with_buffer(self.buffer)
             self.view.set_show_line_numbers(True)
             self.view.set_highlight_current_line(True)
@@ -100,9 +102,7 @@ class Editor(Gtk.Window):
         self.path = path
         self.set_title(os.path.basename(path))
         if HAS_SOURCE:
-            language = GtkSource.LanguageManager.get_default().guess_language(
-                path, None
-            )
+            language = GtkSource.LanguageManager.get_default().guess_language(path, None)
             if language is not None:
                 self.buffer.set_language(language)
         self.update_status()
@@ -181,22 +181,14 @@ class Editor(Gtk.Window):
 
     def error(self, message: str) -> None:
         dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.CLOSE,
-            text=message,
+            transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE, text=message,
         )
         dialog.run()
         dialog.destroy()
 
 
 def main() -> int:
-    provider = Gtk.CssProvider()
-    provider.load_from_data(CSS.encode("utf-8"))
-    Gtk.StyleContext.add_provider_for_screen(
-        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
     Editor(sys.argv[1] if len(sys.argv) > 1 else "")
     Gtk.main()
     return 0

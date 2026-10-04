@@ -17,10 +17,14 @@ try:
     import gi
 
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gdk, Gtk
+    from gi.repository import Gtk
 except Exception as exc:  # pragma: no cover
     sys.stderr.write(f"[ribi-control-center] GTK unavailable: {exc}\n")
     raise SystemExit(1)
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "/usr/local/bin")
+import ribi_theme  # noqa: E402
 
 CSS = """
 #ribi-cc-title { font-size: 16px; font-weight: bold; color: #e6ebf5; }
@@ -48,8 +52,8 @@ def run(command: list) -> None:
         pass
 
 
-def titled(title: str) -> Gtk.Widget:
-    label = Gtk.Label(label=title, xalign=0)
+def titled(text: str) -> Gtk.Widget:
+    label = Gtk.Label(label=text, xalign=0)
     label.set_name("ribi-cc-title")
     return label
 
@@ -72,6 +76,8 @@ class ControlCenter(Gtk.Window):
         super().__init__(title="Ribi Settings")
         self.set_default_size(720, 560)
         self.connect("destroy", Gtk.main_quit)
+        ribi_theme.prefer_dark()
+        ribi_theme.apply_css(self, ribi_theme.base_css() + CSS)
 
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
@@ -91,7 +97,6 @@ class ControlCenter(Gtk.Window):
             notebook.append_page(builder(), Gtk.Label(label=name))
         self.show_all()
 
-    # -- tabs -------------------------------------------------------------
     def tab_appearance(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=16)
         box.pack_start(titled("Appearance"), False, False, 0)
@@ -104,18 +109,10 @@ class ControlCenter(Gtk.Window):
         info.set_name("ribi-cc-note")
         box.pack_start(info, False, False, 0)
 
-        wallpaper = "/usr/share/backgrounds/ribi-wallpaper.png"
-        if os.path.exists(wallpaper):
-            try:
-                pixbuf = Gtk.IconTheme.get_default().load_icon(
-                    wallpaper, 260, Gtk.IconLookupFlags.FORCE_SIZE
-                )
-                image = Gtk.Image.new_from_pixbuf(pixbuf)
-            except Exception:
-                image = Gtk.Image.new_from_icon_name("image-x-generic", Gtk.IconSize.DIALOG)
-        else:
-            image = Gtk.Image.new_from_icon_name("image-missing", Gtk.IconSize.DIALOG)
-        box.pack_start(image, False, False, 0)
+        swatches = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for name in ("files", "terminal", "zen", "editor", "screenshot", "control"):
+            swatches.pack_start(ribi_theme.icon_widget(name, size=36), False, False, 0)
+        box.pack_start(swatches, False, False, 0)
         return box
 
     def tab_display(self) -> Gtk.Widget:
@@ -124,8 +121,8 @@ class ControlCenter(Gtk.Window):
         box.pack_start(scrolled_text(capture(["xrandr", "--query"])), True, True, 0)
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for label, size in (("1024x768", "1024x768"), ("1280x800", "1280x800"), ("1920x1080", "1920x1080")):
-            button = Gtk.Button(label=label)
+        for size in ("1024x768", "1280x800", "1920x1080"):
+            button = Gtk.Button(label=size)
             button.connect("clicked", lambda _b, s=size: self.set_resolution(s))
             row.pack_start(button, False, False, 0)
         box.pack_start(row, False, False, 0)
@@ -180,8 +177,7 @@ class ControlCenter(Gtk.Window):
     def tab_users(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=16)
         box.pack_start(titled("Users"), False, False, 0)
-        current = os.environ.get("USER", "ribi")
-        info = Gtk.Label(label=f"Current user: {current}", xalign=0)
+        info = Gtk.Label(label=f"Current user: {os.environ.get('USER', 'ribi')}", xalign=0)
         info.set_name("ribi-cc-note")
         box.pack_start(info, False, False, 0)
         change = Gtk.Button(label="Change password")
@@ -192,10 +188,9 @@ class ControlCenter(Gtk.Window):
     def tab_about(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=16)
         box.pack_start(titled("About Ribi OS"), False, False, 0)
-        kernel = platform.release()
         text = (
             "Ribi OS\n"
-            f"Kernel: {kernel}\n"
+            f"Kernel: {platform.release()}\n"
             f"Machine: {platform.machine()}\n"
             f"Python: {platform.python_version()}\n"
             "\nA from-scratch x86_64 desktop OS with its own init,\n"
@@ -207,16 +202,12 @@ class ControlCenter(Gtk.Window):
         return box
 
     def refresh(self) -> None:
-        if getattr(self, "network_view", None) is not None:
-            self.network_view.get_buffer().set_text(capture(["ip", "addr"]))
+        view = getattr(self, "network_view", None)
+        if view is not None:
+            view.get_buffer().set_text(capture(["ip", "addr"]))
 
 
 def main() -> int:
-    provider = Gtk.CssProvider()
-    provider.load_from_data(CSS.encode("utf-8"))
-    Gtk.StyleContext.add_provider_for_screen(
-        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
     ControlCenter()
     Gtk.main()
     return 0

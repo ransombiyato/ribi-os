@@ -11,6 +11,7 @@ Exit status: 0 for OK/Yes/Info, 1 for Cancel/No or on usage error. For --entry
 the entered text is printed to stdout.
 """
 
+import os
 import sys
 
 
@@ -33,16 +34,28 @@ def gtk_dialog(mode: str, title: str, message: str, default: str) -> int:
             return 0
         return 0
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, "/usr/local/bin")
+    try:
+        import ribi_theme
+    except Exception:
+        ribi_theme = None
+
+    def theme(dialog):
+        if ribi_theme is not None:
+            ribi_theme.prefer_dark()
+            ribi_theme.apply_theme(dialog)
+
     if mode == "entry":
         dialog = Gtk.Dialog(title=title, flags=0)
         dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "OK", Gtk.ResponseType.OK)
         entry = Gtk.Entry()
         entry.set_text(default)
         entry.set_activates_default(True)
-        label = Gtk.Label(label=message, xalign=0)
         box = dialog.get_content_area()
-        box.add(label)
+        box.add(Gtk.Label(label=message, xalign=0))
         box.add(entry)
+        theme(dialog)
         dialog.show_all()
         response = dialog.run()
         text = entry.get_text()
@@ -57,6 +70,7 @@ def gtk_dialog(mode: str, title: str, message: str, default: str) -> int:
             flags=0, message_type=Gtk.MessageType.INFO,
             buttons=Gtk.ButtonsType.CLOSE, text=title, secondary_text=message,
         )
+        theme(dialog)
         dialog.run()
         dialog.destroy()
         return 0
@@ -66,6 +80,7 @@ def gtk_dialog(mode: str, title: str, message: str, default: str) -> int:
             flags=0, message_type=Gtk.MessageType.ERROR,
             buttons=Gtk.ButtonsType.CLOSE, text=title, secondary_text=message,
         )
+        theme(dialog)
         dialog.run()
         dialog.destroy()
         return 0
@@ -75,6 +90,7 @@ def gtk_dialog(mode: str, title: str, message: str, default: str) -> int:
             flags=0, message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.YES_NO, text=title, secondary_text=message,
         )
+        theme(dialog)
         response = dialog.run()
         dialog.destroy()
         return 0 if response == Gtk.ResponseType.YES else 1

@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 """ribi-file-explorer - a small GTK3 file manager for Ribi OS.
 
-Features: sidebar of common places, path bar with back/forward/up, a list view
-with human-readable sizes and dates, open on double-click, context actions
-(open, rename, delete, new folder). No desktop framework beyond GTK3.
+Sidebar of common places, a path bar with back/forward/up, a list view with
+human-readable sizes and dates, open on double-click, and context actions
+(open, rename, delete, new folder). All icons are Cairo-drawn so no icon theme
+or image loader is required.
 """
 
 import os
@@ -16,10 +17,14 @@ try:
     import gi
 
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gdk, Gio, GLib, Gtk
+    from gi.repository import Gio, GLib, Gtk
 except Exception as exc:  # pragma: no cover
     sys.stderr.write(f"[ribi-file-explorer] GTK unavailable: {exc}\n")
     raise SystemExit(1)
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "/usr/local/bin")
+import ribi_theme  # noqa: E402
 
 PLACES = [
     ("Home", os.path.expanduser("~")),
@@ -35,6 +40,8 @@ PLACES = [
 
 CSS = """
 #ribi-fx-path { font-size: 12px; color: #9fb0c8; }
+#ribi-fx-side { background-color: rgba(16,19,29,0.5); }
+#ribi-fx-side row { padding: 2px; }
 """
 
 
@@ -60,6 +67,8 @@ class Explorer(Gtk.Window):
         self.set_default_size(900, 560)
         self.set_name("ribi-fx")
         self.connect("destroy", Gtk.main_quit)
+        ribi_theme.prefer_dark()
+        ribi_theme.apply_css(self, ribi_theme.base_css() + CSS)
         self.history = []
         self.index = -1
 
@@ -68,11 +77,11 @@ class Explorer(Gtk.Window):
         header.set_title("Ribi Files")
         self.set_titlebar(header)
 
-        self.back = Gtk.Button.new_from_icon_name("go-previous", Gtk.IconSize.BUTTON)
-        self.forward = Gtk.Button.new_from_icon_name("go-next", Gtk.IconSize.BUTTON)
-        self.up = Gtk.Button.new_from_icon_name("go-up", Gtk.IconSize.BUTTON)
-        new_folder = Gtk.Button.new_from_icon_name("folder-new", Gtk.IconSize.BUTTON)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh", Gtk.IconSize.BUTTON)
+        self.back = ribi_theme.icon_button("back", tooltip="Back", size=18)
+        self.forward = ribi_theme.icon_button("forward", tooltip="Forward", size=18)
+        self.up = ribi_theme.icon_button("up", tooltip="Up", size=18)
+        new_folder = ribi_theme.icon_button("new", tooltip="New Folder", size=18)
+        refresh = ribi_theme.icon_button("refresh", tooltip="Refresh", size=18)
         self.back.connect("clicked", lambda _b: self.go_back())
         self.forward.connect("clicked", lambda _b: self.go_forward())
         self.up.connect("clicked", lambda _b: self.go_up())
@@ -90,31 +99,28 @@ class Explorer(Gtk.Window):
         self.add(split)
 
         sidebar = Gtk.ListBox()
+        sidebar.set_name("ribi-fx-side")
         sidebar.set_size_request(170, -1)
         for label, path in PLACES:
             row = Gtk.ListBoxRow()
-            row.add(Gtk.Label(label=label, xalign=0, margin=8))
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.pack_start(ribi_theme.icon_widget("folder", size=16), False, False, 0)
+            box.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
+            row.add(box)
             row.path = path
             sidebar.add(row)
         sidebar.connect("row-activated", self.on_place)
         split.pack1(sidebar, False, False)
 
-        self.store = Gtk.ListStore(Gtk.Pixbuf, str, str, str)
+        self.store = Gtk.ListStore(str, str, str)
         view = Gtk.TreeView(model=self.store)
         view.connect("row-activated", self.on_open)
         view.connect("button-press-event", self.on_button)
-
-        for title, column in (("", 0), ("Name", 1), ("Size", 2), ("Modified", 3)):
-            renderer = (
-                Gtk.CellRendererPixbuf() if column == 0 else Gtk.CellRendererText()
-            )
+        for title, column in (("Name", 0), ("Size", 1), ("Modified", 2)):
+            renderer = Gtk.CellRendererText()
             tree_column = Gtk.TreeViewColumn(title, renderer)
-            if column == 0:
-                tree_column.add_attribute(renderer, "pixbuf", 0)
-                tree_column.set_fixed_width(28)
-            else:
-                tree_column.add_attribute(renderer, "text", column)
-                tree_column.set_resizable(True)
+            tree_column.add_attribute(renderer, "text", column)
+            tree_column.set_resizable(True)
             view.append_column(tree_column)
         self.view = view
 
@@ -169,32 +175,23 @@ class Explorer(Gtk.Window):
                 key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()),
             )
         except PermissionError:
-            self.store.append([None, "(permission denied)", "", ""])
+            self.store.append(["(permission denied)", "", ""])
             return
         for entry in entries:
             try:
                 stat = entry.stat()
-                size = "" if entry.is_dir() else human_size(stat.st_size)
+                size = "<dir>" if entry.is_dir() else human_size(stat.st_size)
                 modified = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
-                icon = (
-                    "folder" if entry.is_dir() else "text-x-generic"
-                )
-                pixbuf = self.view.render_icon(
-                    Gtk.IconTheme.get_default().load_icon(
-                        icon, 16, Gtk.IconLookupFlags.FORCE_SIZE
-                    ),
-                    Gtk.IconSize.BUTTON,
-                )
             except OSError:
-                size, modified, pixbuf = "", "", None
-            self.store.append([pixbuf, entry.name, size, modified])
+                size, modified = "", ""
+            self.store.append([entry.name, size, modified])
 
     # -- actions ----------------------------------------------------------
     def selected_path(self) -> str:
         model, tree_iter = self.view.get_selection().get_selected()
         if tree_iter is None:
             return ""
-        return os.path.join(self.current, model[tree_iter][1])
+        return os.path.join(self.current, model[tree_iter][0])
 
     def on_open(self, _view, _path, _column) -> None:
         target = self.selected_path()
@@ -242,17 +239,13 @@ class Explorer(Gtk.Window):
 
     def delete(self, target: str) -> None:
         dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.QUESTION,
+            transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.YES_NO,
             text=f"Move '{os.path.basename(target)}' to trash?",
         )
         if dialog.run() == Gtk.ResponseType.YES:
             try:
-                from gi.repository import Gio as _Gio
-
-                _Gio.File.new_for_path(target).trash(None)
+                Gio.File.new_for_path(target).trash(None)
             except Exception:
                 try:
                     if os.path.isdir(target):
@@ -283,11 +276,8 @@ class Explorer(Gtk.Window):
 
     def error(self, message: str) -> None:
         dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.CLOSE,
-            text=message,
+            transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE, text=message,
         )
         dialog.run()
         dialog.destroy()
@@ -295,11 +285,6 @@ class Explorer(Gtk.Window):
 
 def main() -> int:
     start = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~")
-    provider = Gtk.CssProvider()
-    provider.load_from_data(CSS.encode("utf-8"))
-    Gtk.StyleContext.add_provider_for_screen(
-        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
     Explorer(start)
     Gtk.main()
     return 0

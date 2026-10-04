@@ -2,14 +2,13 @@
 """ribi-dock - the Ribi OS desktop panel and application launcher.
 
 A single GTK3 window pinned to the bottom edge that provides:
-  * an application menu (also available as a standalone launcher),
+  * an application menu,
   * quick-launch buttons for the core apps,
   * a live clock,
   * a compact system tray (volume, battery).
 
-The dock is intentionally self-contained: it degrades gracefully if GTK or the
-individual apps are unavailable, so a missing optional app never takes down
-the whole desktop session.
+Icons are drawn with Cairo (see ribi_theme) so the dock never depends on the
+target's image/icon stack, which is intentionally minimal.
 """
 
 import os
@@ -27,63 +26,31 @@ except Exception as exc:  # pragma: no cover - depends on target GTK stack
     sys.stderr.write(f"[ribi-dock] GTK unavailable: {exc}\n")
     raise SystemExit(1)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, "/usr/local/bin")
+import ribi_theme  # noqa: E402
+
 APP_ID = "ribi-dock"
 MENU_MODE = "--menu" in sys.argv
 LOG = os.path.join(os.path.expanduser("~"), ".cache", "ribi-dock.log")
 
-# name -> (label, command, icon name)
+# key -> (label, command, glyph)
 APPS = [
-    ("files", "Files", "ribi-file-explorer", "system-file-manager"),
-    ("terminal", "Terminal", "xterm -title Ribi\\ Terminal", "utilities-terminal"),
-    ("zen", "Zen Browser", "zen-browser", "zen-browser"),
-    ("editor", "Editor", "ribi-edit", "accessories-text-editor"),
-    ("screenshot", "Screenshot", "ribi-screenshot", "camera-photo"),
-    ("control", "Settings", "ribi-control-center.py", "preferences-system"),
+    ("files", "Files", "ribi-file-explorer", "files"),
+    ("terminal", "Terminal", "xterm -title Ribi\\ Terminal", "terminal"),
+    ("zen", "Zen Browser", "zen-browser", "zen"),
+    ("editor", "Editor", "ribi-edit", "editor"),
+    ("screenshot", "Screenshot", "ribi-screenshot", "screenshot"),
+    ("control", "Settings", "ribi-control-center.py", "control"),
     ("obs", "OBS Studio", "obs --disable-shutdown-check", "obs"),
 ]
 
 QUICK = ["files", "terminal", "zen", "editor", "control"]
 
-CSS = """
-#ribi-dock {
-    background-color: rgba(18, 21, 32, 0.92);
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 4px 10px;
-}
-#ribi-dock button {
-    background: transparent;
-    border: none;
-    border-radius: 8px;
-    padding: 4px 8px;
-    color: #e6ebf5;
-}
-#ribi-dock button:hover {
-    background-color: rgba(57, 197, 255, 0.20);
-}
-#ribi-dock button:active {
-    background-color: rgba(57, 197, 255, 0.35);
-}
-#ribi-clock {
-    color: #e6ebf5;
-    font-size: 12px;
-}
-#ribi-tray {
-    color: #9fb0c8;
-    font-size: 12px;
-}
-#ribi-menu {
-    background-color: rgba(18, 21, 32, 0.98);
-}
-#ribi-menu button {
-    background: transparent;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 12px;
-    color: #e6ebf5;
-}
-#ribi-menu button:hover {
-    background-color: rgba(57, 197, 255, 0.20);
-}
+MENU_CSS = """
+#ribi-menu { background-color: rgba(16, 19, 29, 0.98); }
+#ribi-menu button { background: transparent; border: none; padding: 8px 12px; color: #e6ebf5; }
+#ribi-menu button:hover { background-color: rgba(57, 197, 255, 0.18); border-radius: 8px; }
 """
 
 
@@ -97,7 +64,6 @@ def log(message: str) -> None:
 
 
 def run(command: str) -> None:
-    """Launch an app detached, tolerating a missing binary."""
     program = command.split()[0]
     if shutil.which(program) is None:
         log(f"skip missing program: {program}")
@@ -108,16 +74,6 @@ def run(command: str) -> None:
         log(f"launch failed: {command}: {exc}")
 
 
-def icon_for(name: str) -> Gtk.Image:
-    theme = Gtk.IconTheme.get_default()
-    try:
-        if theme.has_icon(name):
-            return Gtk.Image.new_from_icon_name(name, Gtk.IconSize.DND)
-    except Exception:
-        pass
-    return Gtk.Image.new_from_icon_name("application-x-executable", Gtk.IconSize.DND)
-
-
 def build_menu() -> Gtk.Window:
     window = Gtk.Window(title="Ribi Applications")
     window.set_name("ribi-menu")
@@ -126,13 +82,14 @@ def build_menu() -> Gtk.Window:
     window.set_border_width(10)
     window.set_default_size(360, -1)
     window.connect("destroy", Gtk.main_quit)
+    ribi_theme.apply_css(window, ribi_theme.base_css() + MENU_CSS)
 
     grid = Gtk.Grid(column_spacing=6, row_spacing=6)
-    for index, (key, label, command, icon_name) in enumerate(APPS):
+    for index, (_key, label, command, glyph) in enumerate(APPS):
         button = Gtk.Button()
         button.set_tooltip_text(label)
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        box.pack_start(icon_for(icon_name), False, False, 0)
+        box.pack_start(ribi_theme.icon_widget(glyph, size=24), False, False, 0)
         box.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
         button.add(box)
         button.connect("clicked", lambda _b, c=command: (run(c), window.destroy()))
@@ -177,27 +134,20 @@ def build_dock() -> Gtk.Window:
     window.set_skip_taskbar_hint(True)
     window.set_keep_above(True)
     window.connect("destroy", Gtk.main_quit)
+    ribi_theme.apply_css(window, ribi_theme.base_css() + ribi_theme.DOCK_CSS)
 
-    screen = window.get_screen()
-    monitor = screen.get_primary_monitor() or 0
-    geometry = screen.get_monitor_geometry(monitor)
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
 
-    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-
-    menu_button = Gtk.Button()
-    menu_button.set_tooltip_text("Applications")
-    menu_button.add(icon_for("view-app-grid"))
-    menu_button.connect("clicked", lambda _b: show_menu())
+    menu_button = ribi_theme.icon_button("menu", tooltip="Applications")
+    menu_button.connect("clicked", lambda _b: open_launcher())
     box.pack_start(menu_button, False, False, 0)
 
     for key in QUICK:
         entry = next((a for a in APPS if a[0] == key), None)
         if entry is None:
             continue
-        _key, label, command, icon_name = entry
-        button = Gtk.Button()
-        button.set_tooltip_text(label)
-        button.add(icon_for(icon_name))
+        _key, label, command, glyph = entry
+        button = ribi_theme.icon_button(glyph, tooltip=label)
         button.connect("clicked", lambda _b, c=command: run(c))
         box.pack_start(button, False, False, 0)
 
@@ -222,14 +172,52 @@ def build_dock() -> Gtk.Window:
     GLib.timeout_add_seconds(5, tick)
 
     window.add(box)
+
+    screen = window.get_screen()
+    monitor = screen.get_primary_monitor() or 0
+    geometry = screen.get_monitor_geometry(monitor)
+    # Span the full monitor width; let the height follow the content. Position
+    # from the real allocation (size-allocate) because get_size() before the
+    # window is mapped reports a placeholder and misplaces the panel.
+    window.set_size_request(geometry.width, -1)
+    placed = {"done": False}
+
+    def place(_widget, allocation):
+        if not placed["done"] and allocation.height > 1:
+            placed["done"] = True
+            window.move(geometry.x, geometry.y + geometry.height - allocation.height)
+
+    window.connect("size-allocate", place)
     window.show_all()
-    window.move(geometry.x, geometry.y + geometry.height - window.get_size()[1])
     return window
 
 
 def show_menu() -> None:
-    menu = build_menu()
-    menu.show_all()
+    build_menu().show_all()
+
+
+_launcher_proc = {"proc": None}
+
+
+def open_launcher() -> None:
+    """Open the searchable application launcher overlay.
+
+    The launcher runs as its own process (it owns focus and Esc-to-close
+    handling). Re-clicking while one is already running does nothing rather
+    than stacking duplicate overlays.
+    """
+    proc = _launcher_proc["proc"]
+    if proc is not None and proc.poll() is None:
+        return
+    command = "/usr/local/bin/ribi-launcher"
+    if not os.path.exists(command):
+        show_menu()
+        return
+    try:
+        _launcher_proc["proc"] = subprocess.Popen(command, start_new_session=True)
+    except OSError as exc:
+        log(f"launcher failed: {exc}")
+        show_menu()
 
 
 def main() -> int:
@@ -238,11 +226,6 @@ def main() -> int:
         Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
     except Exception:
         pass
-    provider = Gtk.CssProvider()
-    provider.load_from_data(CSS.encode("utf-8"))
-    Gtk.StyleContext.add_provider_for_screen(
-        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
 
     if MENU_MODE:
         show_menu()

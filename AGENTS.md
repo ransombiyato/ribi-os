@@ -62,3 +62,29 @@ on every push and attempts a full ISO build on `main`.
 - Keep build logic deterministic and offline-friendly: downloads are
   SHA-256 verified and cached; prefer adding to `config.py` over hardcoding
   URLs or versions inside `builder.py`.
+
+## Native desktop components (`ribi/components/`)
+
+These are Ribi's own GTK3/Python programs written into the OS. `ribi-shell.py`
+is the session owner: it paints the wallpaper, starts `ribi-dock`, and restarts
+the dock if it exits. `ribi-wm.py` launches the ICCCM/EWMH window manager
+(Openbox) plus an optional compositor.
+
+Gotchas learned the hard way:
+
+- **No stock icon themes.** The Alpine v3.24 GTK3 stack ships only the XPM
+  gdk-pixbuf loader, so themed/builtin PNG icon lookups abort GTK. Draw all
+  glyphs with Cairo via the shared `ribi/components/ribi_theme.py` helper
+  instead of `Gtk.Image.new_from_icon_name`. `py3-cairo` must be in
+  `TARGET_APK_PACKAGES_DESKTOP`.
+- **Do not size/position a window from `get_size()` before it is mapped.** It
+  returns a placeholder (the dock came up 10x10 and invisible). Use
+  `set_size_request` for the width and a `size-allocate` handler for the real
+  height before `move()`.
+- **Never edit `ribi/sources/` or `ribi/payloads/` casually.** They are pinned
+  byte-for-byte to `legacy/ribi-iso-builder.monolith.py` by
+  `tests/test_package.py`; changing them requires updating the legacy reference
+  too. Prefer adding new files over editing the pinned ones.
+- **The sysroot cache is keyed by a package-list hash.** `stage_3_*` stores a
+  `.sysroot_packages` signature next to `.sysroot_ready`; adding a package to
+  `config.py` invalidates and rebuilds the sysroot automatically.
