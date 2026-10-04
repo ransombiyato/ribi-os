@@ -5,6 +5,7 @@ original monolithic builder for readability; behaviour is unchanged.
 """
 
 import base64
+import concurrent.futures
 import hashlib
 import io
 import json
@@ -26,7 +27,7 @@ from .deps import cic_host_dependencies
 from .download import download_file, download_with_sidecar_hash
 from .kernel_config import get_bespoke_kernel_config
 from .logging_utils import BuildLogger, run_cmd, sha256_file, write_file
-from .sources import SRC_LIVE_INIT, SRC_RIBI_2048, SRC_RIBI_CLI, SRC_RIBI_INIT, SRC_RIBI_INSTALLER, SRC_RIBI_PKG, SRC_RIBI_SETUP, SRC_RIBI_SNAKE, SRC_RIBI_SVC
+from .sources import SRC_LIVE_INIT, SRC_RIBI_2048, SRC_RIBI_CLI, SRC_RIBI_DOCTOR, SRC_RIBI_INIT, SRC_RIBI_INSTALLER, SRC_RIBI_PKG, SRC_RIBI_SNAKE, SRC_RIBI_SVC
 
 _PAYLOADS_DIR = Path(__file__).resolve().parent / "payloads"
 _COMPONENTS_DIR = Path(__file__).resolve().parent / "components"
@@ -194,7 +195,11 @@ class RibiMasterBuilder:
         BuildLogger.info(f"Resolved {len(install_set)} total x86_64 packages (console core + networking + audio + deps).")
 
         # 4. Download and unpack every resolved package into the hermetic sysroot.
-        for pkg in install_set:
+        #    Extraction is I/O- and CPU-bound and each package writes to a
+        #    disjoint set of paths, so unpack them in a small thread pool. The
+        #    whole closure is ~200 packages; doing it serially dominated the
+        #    stage. Any failure still surfaces with the offending package name.
+        def _fetch_one(pkg: str) -> str:
             version = pkg_versions[pkg]
             apk_name = f"{pkg}-{version}.apk"
             repo_sub = pkg_repo.get(pkg, "main")
@@ -207,6 +212,12 @@ class RibiMasterBuilder:
                 safe_tar_extract(apk_dest, DIR_X86_SYSROOT)
             except Exception as e:
                 raise RuntimeError(f"Failed to fetch, verify, or extract required package '{pkg}': {e}") from e
+            return pkg
+
+        workers = min(8, max(4, (os.cpu_count() or 4) * 2))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            for _ in pool.map(_fetch_one, install_set):
+                pass
 
         # Final structural gate: do not mark a partially staged sysroot as ready.
         required_standalone = ["busybox", "python3", "blkid", "lsblk", "parted", "mkfs.ext4", "mkfs.vfat", "rsync", "acpid"]
@@ -521,6 +532,9 @@ Type=Fixed
             "image-x-generic": "roundrectangle 8%,20% 92%,84% 3,3",
             "multimedia-player": "polygon 30%,16% 84%,50% 30%,84%",
             "package-x-generic": "polygon 50%,8% 90%,30% 90%,70% 50%,92% 10%,70% 10%,30%",
+            "application-pdf": "polygon 50%,16% 86%,50% 50%,84% 14%,50%",
+            "audio-x-generic": "polygon 16%,38% 62%,38% 62%,16% 62%,84% 16%,62%",
+            "audio-editor": "circle 12%,12% 88%,88% circle 50%,50% 68%,68%",
             "applications-internet": "circle 8%,8% 92%,92% line 8%,50% 92%,50%",
             "preferences-desktop-display": "roundrectangle 8%,18% 92%,72% 3,3 line 50%,72% 50%,90%",
             "preferences-desktop-theme": "circle 26%,26% 74%,74% circle 50%,50% 66%,66%",
@@ -1176,7 +1190,6 @@ exit 127
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-pkg", SRC_RIBI_PKG, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi", SRC_RIBI_CLI, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-installer", SRC_RIBI_INSTALLER, mode=0o755)
-        write_file(DIR_ROOTFS / "usr/local/bin/ribi-setup", SRC_RIBI_SETUP, mode=0o755)
         editor_src = _component("ribi-code-editor.py")
         if not editor_src.is_file():
             raise RuntimeError(f"Missing Code Editor source: {editor_src}")
@@ -1187,6 +1200,7 @@ exit 127
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-app-prompt", prompt_src.read_text(), mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-snake", SRC_RIBI_SNAKE, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-2048", SRC_RIBI_2048, mode=0o755)
+        write_file(DIR_ROOTFS / "usr/local/bin/ribi-doctor", SRC_RIBI_DOCTOR, mode=0o755)
 
         # Preserve service identities created by the imported userspace. Only add
         # the Ribi accounts/groups that are required by our native init. Privileged
@@ -1280,6 +1294,49 @@ exec /sbin/poweroff -f
         write_file(acpi_events / "power-button",
                    "event=button/power.*\naction=/usr/local/sbin/ribi-acpi-poweroff\n", mode=0o644)
 
+        # OBS Studio defaults. OBS 32's Simple output defaults to a fragmented
+        # "hybrid" MP4/MOV muxer, which segfaults in this minimal image the
+        # moment recording starts (the crash lands right after the muxer logs
+        # "Writing Hybrid MP4/MOV file"). MKV is the mature, crash-safe muxer
+        # and needs no fragmented-MP4 path, so ship a profile that selects it.
+        # The audio encoder is left at OBS's default; only the container changes.
+        obs_base = DIR_ROOTFS / "home/ribi/.config/obs-studio"
+        write_file(obs_base / "global.ini", """[General]
+EnableAutoUpdates=false
+FirstRun=true
+SafeMode=false
+
+[Basic]
+Profile=ribi
+ProfileDir=ribi
+SceneCollection=ribi
+SceneCollectionFile=ribi
+""")
+        write_file(obs_base / "basic/profiles/ribi/basic.ini", """[Output]
+Mode=Simple
+RecFormat2=mkv
+RecQuality=Stream
+RecEncoder=x264
+RecTracks=1
+
+[Video]
+BaseCX=1280
+BaseCY=800
+OutputCX=1280
+OutputCY=800
+FPSCommon=30
+
+[Audio]
+SampleRate=48000
+ChannelSetup=Stereo
+""")
+        (obs_base / "basic/scenes").mkdir(parents=True, exist_ok=True)
+        for sub in (".config", ".config/obs-studio"):
+            try:
+                os.chown(DIR_ROOTFS / "home/ribi" / sub, 1000, 1000)
+            except OSError:
+                pass
+
         BuildLogger.info("Ribi core management services deployed.")
 
     def stage_7_synthesize_applications(self):
@@ -1314,9 +1371,10 @@ exec /sbin/poweroff -f
             ("ribi-media-player.desktop", "Media Player", "celluloid %U", "multimedia-player", "AudioVideo;Player;", False),
             ("ribi-archive-manager.desktop", "Archive Manager", "file-roller %U", "package-x-generic", "Utility;Archiving;", False),
             ("ribi-text-editor.desktop", "Text Editor", "mousepad %F", "accessories-text-editor", "Utility;TextEditor;", False),
+            ("ribi-document-viewer.desktop", "Document Viewer", "zathura %U", "application-pdf", "Office;Viewer;Graphics;", False),
+            ("ribi-audio-editor.desktop", "Audacity", "audacity %F", "audio-editor", "AudioVideo;Audio;Editor;", False),
             ("ribi-control-center.desktop", "Ribi Control Center", "ribi-control-center.py", "preferences-system", "System;Settings;", False),
-            ("ribi-installer.desktop", "Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "system-software-install", "System;", True),
-            ("ribi-setup.desktop", "Setup Ribi OS", "xterm -hold -e /usr/local/bin/ribi-setup", "system-software-install", "System;Settings;", False),
+            ("ribi-installer.desktop", "Install Ribi OS", "ribi-terminal -e sudo -n /usr/local/bin/ribi-installer", "system-software-install", "System;", False),
             ("ribi-edit.desktop", "Ribi Code Editor", "ribi-edit %F", "nvim", "Utility;TextEditor;Development;", True),
             ("ribi-snake.desktop", "Ribi Snake", "ribi-snake", "applications-games", "Game;", True),
             ("ribi-2048.desktop", "Ribi 2048", "ribi-2048", "applications-games", "Game;", True),
@@ -1327,10 +1385,6 @@ exec /sbin/poweroff -f
                 f"[Desktop Entry]\nVersion=1.0\nType=Application\nName={name}\nExec={exec_cmd}\n"
                 f"Icon={icon}\nCategories={cats}\nTerminal={'true' if term else 'false'}\nStartupNotify=false\n"
             )
-            # This root-only wizard currently lacks the installer's full target
-            # preflight. Keep it out of the app finder until its Stage 3/4 audit.
-            if fname == "ribi-setup.desktop":
-                content += "NoDisplay=true\n"
             write_file(apps_dir / fname, content)
 
         # Keep launch metadata available for users who inspect the filesystem,
@@ -1748,7 +1802,7 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
         for util in ("parted","mkfs.ext4","mkfs.vfat","lsblk","blkid"):
             p=self.find_x86_64_binary(util,[DIR_ROOTFS]); 
             if not (p and p.is_file() and is_elf_x86_64(p) and not p.is_symlink()): raise RuntimeError(f"Validation Failed: standalone {util} missing")
-        for rel in ("sbin/ribi-init","usr/local/bin/ribisvc","usr/local/bin/ribi-pkg","usr/local/bin/ribi","usr/local/bin/ribi-installer","usr/local/bin/ribi-edit","usr/local/bin/ribi-snake","usr/local/bin/ribi-2048"):
+        for rel in ("sbin/ribi-init","usr/local/bin/ribisvc","usr/local/bin/ribi-pkg","usr/local/bin/ribi","usr/local/bin/ribi-installer","usr/local/bin/ribi-doctor","usr/local/bin/ribi-edit","usr/local/bin/ribi-snake","usr/local/bin/ribi-2048"):
             p=DIR_ROOTFS/rel; 
             if not (p.is_file() and os.access(p,os.X_OK)): raise RuntimeError(f"Validation Failed: /{rel} missing/not executable")
         passwd=(DIR_ROOTFS/"etc/passwd").read_text(); group=(DIR_ROOTFS/"etc/group").read_text(); shadow=(DIR_ROOTFS/"etc/shadow").read_text()
@@ -1765,7 +1819,7 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
             if leaked:
                 raise RuntimeError(f"Validation Failed: no-desktop release contains GUI artifacts: {leaked}")
         else:
-            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
+            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "usr/bin/zathura", "usr/bin/audacity", "usr/bin/obs", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
                 if not (DIR_ROOTFS / rel).exists():
                     raise RuntimeError(f"Validation Failed: Ribi desktop payload missing: /{rel}")
             for rel in ("usr/share/glib-2.0/schemas/gschemas.compiled", "usr/share/mime/mime.cache"):

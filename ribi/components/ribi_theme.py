@@ -37,6 +37,8 @@ PALETTE = {
     "media": "#ff4f81",
     "archive": "#ffd43b",
     "text": "#66d17a",
+    "pdf": "#ff6b81",
+    "audio": "#b98cff",
     "display": "#39c5ff",
     "folder": "#ffd43b",
     "file": "#9fb0c8",
@@ -333,6 +335,26 @@ def draw_glyph(ctx, name, size):
             ctx.move_to(m + s * 0.26, y)
             ctx.line_to(m + s * 0.74, y)
         ctx.stroke()
+    elif name == "pdf":
+        _rounded_rect(ctx, m + s * 0.1, m, s * 0.8, s, s * 0.1)
+        ctx.stroke()
+        ctx.move_to(m + s * 0.28, m + s * 0.62)
+        ctx.line_to(m + s * 0.5, m + s * 0.3)
+        ctx.line_to(m + s * 0.72, m + s * 0.62)
+        ctx.close_path()
+        ctx.fill()
+    elif name == "audio":
+        ctx.move_to(m + s * 0.08, cy)
+        ctx.line_to(m + s * 0.34, cy)
+        ctx.line_to(m + s * 0.62, m + s * 0.2)
+        ctx.line_to(m + s * 0.62, m + s * 0.8)
+        ctx.line_to(m + s * 0.34, cy)
+        ctx.close_path()
+        ctx.fill()
+        ctx.arc(m + s * 0.74, cy, s * 0.12, -math.pi / 2, math.pi / 2)
+        ctx.stroke()
+        ctx.arc(m + s * 0.74, cy, s * 0.24, -math.pi / 2, math.pi / 2)
+        ctx.stroke()
     elif name == "display":
         _rounded_rect(ctx, m, m + s * 0.1, s, s * 0.62, s * 0.08)
         ctx.stroke()
@@ -402,6 +424,20 @@ DOCK_CSS = """
 }
 #ribi-clock { color: #e6ebf5; font-size: 12px; font-weight: bold; }
 #ribi-tray { color: #9fb0c8; font-size: 12px; }
+#ribi-task {
+    background-color: rgba(29, 36, 49, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 2px 8px;
+    color: #c9d2e3;
+    font-size: 12px;
+}
+#ribi-task:hover { background-color: rgba(57, 197, 255, 0.18); border-color: #39c5ff; }
+#ribi-task.ribi-task-active {
+    background-color: rgba(57, 197, 255, 0.30);
+    border-color: #39c5ff;
+    color: #ffffff;
+}
 """
 
 

@@ -54,18 +54,20 @@ Target: a cohesive, modern desktop that feels intentional, not assembled.
 - [x] Compositing window manager (picom) for shadows, rounded corners, and
       smooth transparency. `picom` is shipped with `etc/xdg/ribi/picom.conf`
       and started by `ribi-wm.py` before Openbox.
-- [~] A real panel/dock: application menu, open-window list, system tray,
+- [x] A real panel/dock: application menu, open-window list, system tray,
       clock/calendar, and status indicators (network, volume, battery).
       Native Cairo-drawn dock landed (menu, quick launch, clock, volume/battery
-      tray); open-window list still to do.
+      tray, and an EWMH open-window taskbar: click to focus, right-click to
+      minimise/maximise/close).
 - [x] Application launcher with search (replaces the plain menu).
       `ribi-launcher.py` - centred overlay, live filtering, Enter/Esc, Cairo icons.
 - [ ] Notifications with a daemon and a small popup theme.
 - [ ] Lock screen and login greeter.
 - [ ] Settings app: display, sound, network, appearance, users, power.
 - [ ] File manager.
-- [ ] Default app set: browser, terminal, text editor, calculator, image
-      viewer, media player, archive tool, screenshot tool.
+- [x] Default app set: browser (Zen), terminal, text editor, calculator, image
+      viewer, media player, archive tool, screenshot tool, PDF viewer (zathura),
+      audio editor (Audacity).
 - [ ] Boot experience: clean GRUB theme + a graphical boot splash instead of
       raw kernel text.
 - [ ] A proper About page with logo, version, and credits.
@@ -76,7 +78,9 @@ Target: a cohesive, modern desktop that feels intentional, not assembled.
       manual), user account + password, hostname, timezone, locale.
 - [ ] Persistent live mode finished and documented (keep changes on USB).
 - [ ] Optional full-disk encryption.
-- [ ] First-boot setup flow (welcome screen, language, Wi-Fi, account).
+- [x] First-boot setup flow (welcome screen, language, Wi-Fi, account).
+      Merged with the disk installer into one `ribi-installer` wizard:
+      identity -> networking -> storage (erase-install / persistence / ram-only).
 
 ## Phase 5 - Software and updates
 

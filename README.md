@@ -7,7 +7,8 @@ bootable hybrid BIOS/UEFI ISO.
 
 This repository contains the ISO builder. Running it produces
 `ribi-os-bulbQT-x86_64.iso`, a live image that boots to the ribi desktop and
-can be installed to disk with `ribi-installer`.
+can be installed to disk with `ribi-installer` (the same program also runs the
+first-boot setup wizard).
 
 ## Repository layout
 
@@ -30,20 +31,21 @@ ribi/
     ribisvc.py               service manager
     ribi-pkg.py              .rpk package engine
     ribi-cli.py              unified system controller
-    ribi-setup.py            first-boot setup
-    ribi-installer.py        disk installer
+    ribi-installer.py        unified first-boot setup + disk installer
     ribi-edit.py             text editor
+    ribi-doctor.py           desktop/app diagnostic
     ribi-snake.py / ribi-2048.py   games
+  components/              Native GTK3/Cairo desktop programs (dock, launcher,
+                           file explorer, control center, WM/session helpers).
   payloads/                Desktop/session config written into the OS
-                           (lightdm, xfce4 panel/desktop, xorg.conf,
-                           session wrappers, netup script, ...).
+                           (openbox, picom, Xresources, session wrappers, ...).
   assets/wallpaper.png     Bundled desktop wallpaper.
-legacy/                    The original single-file builder, kept for reference.
 ```
 
-The builder was split out of one 5092-line file into the modules above with no
-behavioural change; the embedded target scripts are now real, editable files
-instead of Python string literals.
+The builder was split out of one 5092-line file into the modules above. The
+embedded target scripts are real, editable files instead of Python string
+literals, and the original single-file builder has been removed now that the
+modular package fully replaces it.
 
 ## Usage
 

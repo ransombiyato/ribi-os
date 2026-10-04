@@ -25,9 +25,7 @@ SRC_RIBI_SVC = _load("ribisvc.py")
 SRC_RIBI_PKG = _load("ribi-pkg.py")
 # Unified system controller -> /usr/local/bin/ribi
 SRC_RIBI_CLI = _load("ribi-cli.py")
-# First-boot setup -> /usr/local/bin/ribi-setup
-SRC_RIBI_SETUP = _load("ribi-setup.py")
-# Disk installer -> /usr/local/bin/ribi-installer
+# Unified first-boot setup + disk installer -> /usr/local/bin/ribi-installer
 SRC_RIBI_INSTALLER = _load("ribi-installer.py")
 # Text editor -> /usr/local/bin/ribi-edit
 SRC_RIBI_EDIT = _load("ribi-edit.py")
@@ -35,3 +33,5 @@ SRC_RIBI_EDIT = _load("ribi-edit.py")
 SRC_RIBI_SNAKE = _load("ribi-snake.py")
 # 2048 game -> /usr/local/bin/ribi-2048
 SRC_RIBI_2048 = _load("ribi-2048.py")
+# Desktop/app diagnostic -> /usr/local/bin/ribi-doctor
+SRC_RIBI_DOCTOR = _load("ribi-doctor.py")

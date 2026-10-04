@@ -1,18 +1,24 @@
-"""Regression tests for the modularized builder.
+"""Regression tests for the ribi OS builder.
 
-These pin the behaviour of the split: the package must import, expose every
-top-level definition that the original monolith did, and the externalized
-target sources must match the original embedded strings byte-for-byte.
+These pin the behaviour the OS depends on rather than a byte-for-byte copy of a
+historical file:
+
+  * the builder package imports and compiles,
+  * the target-OS sources and payloads that get written into the image exist,
+  * the package seed sets include the apps and runtimes the desktop needs,
+  * the compositor config never paints a window at less than full opacity,
+  * the desktop app catalogs (launcher + dock) agree with the package set.
+
+The original single-file builder was removed once the modular package replaced
+it, so the tests no longer compare against a legacy reference.
 """
 
-import ast
 import importlib
+import py_compile
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-LEGACY = REPO / "legacy" / "ribi-iso-builder.monolith.py"
-
 sys.path.insert(0, str(REPO))
 
 MODULES = [
@@ -20,13 +26,56 @@ MODULES = [
     "deps", "kernel_config", "builder", "cli", "sources",
 ]
 
+COMPONENTS = [
+    "ribi-dock.py",
+    "ribi-file-explorer.py",
+    "ribi-code-editor.py",
+    "ribi-app-prompt.py",
+    "ribi-screenshot.py",
+    "ribi-shell.py",
+    "ribi-wm.py",
+    "ribi-control-center.py",
+    "ribi-launcher.py",
+    "ribi_theme.py",
+]
 
-def _legacy_tree():
-    return ast.parse(LEGACY.read_text(encoding="utf-8"))
+# The target-OS programs written into /usr/local/bin by the builder.
+SOURCES = [
+    "ribi-init.sh",
+    "live-init.sh",
+    "ribisvc.py",
+    "ribi-pkg.py",
+    "ribi-cli.py",
+    "ribi-installer.py",
+    "ribi-edit.py",
+    "ribi-snake.py",
+    "ribi-2048.py",
+    "ribi-doctor.py",
+]
 
-
-def test_legacy_reference_present():
-    assert LEGACY.is_file(), "the original monolith must be kept for reference"
+# Desktop/session config written into the image by the builder.
+PAYLOADS = [
+    "lightdm.conf",
+    "ribi-desktop-session.sh",
+    "ribi-dump-session.sh",
+    "ribi-xfce-session.sh",
+    "ribi-session-wrapper.sh",
+    "ribi-direct-xsession.sh",
+    "ribi-wallpaper-viewer.sh",
+    "ribi-gtk-probe.py",
+    "ribi-user-handoff.py",
+    "ribi-direct-desktop.sh",
+    "ribi-user-desktop.sh",
+    "openbox-autostart.sh",
+    "ribi-visible-session.sh",
+    "xorg.conf",
+    "ribi-xfce-clients.sh",
+    "ribi-netup.sh",
+    "openbox-ribi-themerc",
+    "ribi-Xresources",
+    "ribi-picom.conf",
+    "ribi-terminal.sh",
+]
 
 
 def test_package_imports():
@@ -35,31 +84,49 @@ def test_package_imports():
     assert ribi.RibiMasterBuilder is not None
 
 
-def test_every_top_level_definition_survived():
-    names = [
-        n.name for n in _legacy_tree().body
-        if isinstance(n, (ast.FunctionDef, ast.ClassDef))
-    ]
-    present = set()
+def test_all_modules_import():
     for mod in MODULES:
-        present |= set(dir(importlib.import_module(f"ribi.{mod}")))
-    missing = [n for n in names if n not in present]
-    assert missing == [], f"definitions lost during split: {missing}"
+        importlib.import_module(f"ribi.{mod}")
 
 
-def test_externalized_sources_match_original():
-    want = {}
-    for node in _legacy_tree().body:
-        if (isinstance(node, ast.Assign)
-                and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id.startswith("SRC_")):
-            want[node.targets[0].id] = ast.literal_eval(node.value)
+def test_legacy_monolith_is_gone():
+    """The modular package replaced the monolith; it must not creep back."""
+    assert not (REPO / "legacy").exists()
 
+
+def test_sources_present_and_compile():
+    sources = REPO / "ribi" / "sources"
+    for name in SOURCES:
+        path = sources / name
+        assert path.is_file(), f"missing target source: {name}"
+        if name.endswith(".py"):
+            py_compile.compile(str(path), doraise=True)
+
+
+def test_sources_module_exposes_every_source():
     from ribi import sources
-    assert len(want) == 10, "expected 10 embedded target sources"
-    for name, value in want.items():
-        normalized = value if value.endswith("\n") else value + "\n"
-        assert getattr(sources, name) == normalized, f"{name} changed during split"
+    for attr in ("SRC_RIBI_INIT", "SRC_LIVE_INIT", "SRC_RIBI_SVC", "SRC_RIBI_PKG",
+                 "SRC_RIBI_CLI", "SRC_RIBI_INSTALLER", "SRC_RIBI_EDIT",
+                 "SRC_RIBI_SNAKE", "SRC_RIBI_2048", "SRC_RIBI_DOCTOR"):
+        value = getattr(sources, attr)
+        assert isinstance(value, str) and value.strip(), f"{attr} is empty"
+    assert not hasattr(sources, "SRC_RIBI_SETUP"), (
+        "setup was merged into the installer; SRC_RIBI_SETUP must be gone"
+    )
+
+
+def test_components_present_and_compile():
+    components = REPO / "ribi" / "components"
+    for name in COMPONENTS:
+        path = components / name
+        assert path.is_file(), f"missing native component: {name}"
+        py_compile.compile(str(path), doraise=True)
+
+
+def test_payloads_present():
+    payloads = REPO / "ribi" / "payloads"
+    for name in PAYLOADS:
+        assert (payloads / name).is_file(), f"missing payload: {name}"
 
 
 def test_bundled_wallpaper_is_a_real_png():
@@ -74,29 +141,90 @@ def test_cli_exposes_main():
     assert callable(cli.main)
 
 
-REQUIRED_COMPONENTS = [
-    "ribi-dock.py",
-    "ribi-file-explorer.py",
-    "ribi-code-editor.py",
-    "ribi-app-prompt.py",
-    "ribi-screenshot.py",
-    "ribi-shell.py",
-    "ribi-wm.py",
-    "ribi-control-center.py",
-    "ribi-launcher.py",
-    "ribi_theme.py",
-]
+# ---- behaviour the desktop relies on --------------------------------------
+
+def test_default_desktop_apps_present_and_catalogued():
+    """Everyday apps must be installed, validated, and searchable."""
+    from ribi import config
+
+    desktop_apps = ("galculator", "ristretto", "celluloid", "file-roller",
+                    "mousepad", "xdg-utils", "zathura", "zathura-pdf-poppler")
+    for app in desktop_apps:
+        assert app in config.TARGET_APK_PACKAGES_DESKTOP, f"{app} missing from desktop packages"
+
+    for app in ("audacity", "obs-studio", "v4l-utils"):
+        assert app in config.TARGET_APK_PACKAGES_APPS, f"{app} missing from apps packages"
+
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    for binary in ("usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid",
+                   "usr/bin/file-roller", "usr/bin/mousepad", "usr/bin/zathura",
+                   "usr/bin/audacity", "usr/bin/obs"):
+        assert binary in source, f"builder does not validate {binary}"
+
+    launcher = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
+    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
+    for command in ("galculator", "ristretto", "celluloid", "file-roller",
+                    "mousepad", "zathura", "audacity"):
+        assert command in launcher, f"launcher catalog missing {command}"
+        assert command in dock, f"dock catalog missing {command}"
 
 
-def test_native_components_present_and_compile():
-    """Every desktop component the builder writes into the OS must exist."""
-    import py_compile
+def test_obs_defaults_use_crash_safe_muxer():
+    """OBS must not default to the hybrid MP4 muxer that segfaulted."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert "RecFormat2=mkv" in source, "OBS should default to the mkv muxer"
 
-    components = REPO / "ribi" / "components"
-    for name in REQUIRED_COMPONENTS:
-        path = components / name
-        assert path.is_file(), f"missing native component: {name}"
-        py_compile.compile(str(path), doraise=True)
+
+def test_v4l2_runtime_is_installed_for_obs():
+    from ribi import config
+    assert "v4l-utils" in config.TARGET_APK_PACKAGES_APPS
+
+
+def test_compositor_never_makes_windows_transparent():
+    """Regression: unfocused windows went invisible with sub-1.0 opacity."""
+    conf = (REPO / "ribi" / "payloads" / "ribi-picom.conf").read_text(encoding="utf-8")
+    for option in ("inactive-opacity = 1.0", "active-opacity = 1.0",
+                   "frame-opacity = 1.0", "unredir-if-possible = false"):
+        assert option in conf, f"compositor config must set '{option}'"
+    assert "inactive-opacity = 0." not in conf
+    assert "unredir-if-possible = true" not in conf
+
+
+def test_installer_is_the_single_setup_flow():
+    """Setup and the disk installer must be one program, not two."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert "ribi-setup" not in source, "ribi-setup must not be installed or catalogued"
+    installer = (REPO / "ribi" / "sources" / "ribi-installer.py").read_text(encoding="utf-8")
+    assert "def wizard" in installer, "the installer must own the guided setup wizard"
+    assert "erase-install" in installer and "persistence" in installer
+
+
+def test_dock_has_open_window_taskbar():
+    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
+    for marker in ("def list_windows", "def window_action", "def refresh_tasks",
+                   "xdotool", "getactivewindow", "windowminimize", "windowclose"):
+        assert marker in dock, f"dock taskbar missing {marker}"
+    assert "threading.Thread" in dock, "window polling must not block the GTK loop"
+
+
+def test_live_squashfs_uses_xz():
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert '"-comp", "xz"' in source, "live squashfs must use xz compression"
+
+
+def test_glib_databases_are_compiled():
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert "glib-compile-schemas" in source, "builder must compile GSettings schemas"
+    assert "update-mime-database" in source, "builder must build the shared-mime database"
+    assert "gschemas.compiled" in source, "builder must validate gschemas.compiled"
+
+
+def test_launcher_enter_activates_from_search_entry():
+    source = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
+    assert 'search.connect("activate"' in source, (
+        "Enter is swallowed by the search entry unless 'activate' is connected"
+    )
+    assert '"launched"' in source, "launcher must guard against double-launching"
 
 
 def test_builder_loads_components_from_components_dir():
@@ -105,113 +233,3 @@ def test_builder_loads_components_from_components_dir():
     assert 'Path(__file__).with_name("ribi-dock.py")' not in source, (
         "components must be loaded via _component(), not relative to builder.py"
     )
-
-
-def test_externalized_payloads_match_original():
-    """Desktop/session config payloads must survive the move to ribi/payloads/."""
-    names = {
-        "lightdm_conf": "lightdm.conf",
-        "desktop_session": "ribi-desktop-session.sh",
-        "dump_session": "ribi-dump-session.sh",
-        "xfce_session": "ribi-xfce-session.sh",
-        "session_wrapper": "ribi-session-wrapper.sh",
-        "direct_xsession": "ribi-direct-xsession.sh",
-        "wallpaper_xml": "xfce4-desktop.xml",
-        "wallpaper_viewer": "ribi-wallpaper-viewer.sh",
-        "gtk_probe_py": "ribi-gtk-probe.py",
-        "handoff_py": "ribi-user-handoff.py",
-        "panel_xml": "xfce4-panel.xml",
-        "shortcuts_xml": "xfce4-shortcuts.xml",
-        "direct": "ribi-direct-desktop.sh",
-        "user_desktop": "ribi-user-desktop.sh",
-        "openbox_autostart": "openbox-autostart.sh",
-        "visible": "ribi-visible-session.sh",
-        "xorg_conf": "xorg.conf",
-        "xfce_clients": "ribi-xfce-clients.sh",
-        "net_up_script": "ribi-netup.sh",
-    }
-    want = {}
-    for node in ast.walk(_legacy_tree()):
-        if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id in names
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-                and len(node.value.value) >= 300):
-            want[node.targets[0].id] = node.value.value
-
-    assert len(want) == len(names), f"expected {len(names)} payloads, found {len(want)}"
-    payloads = REPO / "ribi" / "payloads"
-    for var, filename in names.items():
-        got = (payloads / filename).read_text(encoding="utf-8")
-        assert got == want[var], f"payload {var} ({filename}) changed during externalization"
-
-
-def test_polish_payloads_present_and_installed():
-    """Desktop polish added on top of the split must ship and be wired in."""
-    from ribi import config
-
-    payloads = REPO / "ribi" / "payloads"
-    for filename in (
-        "openbox-ribi-themerc",
-        "ribi-Xresources",
-        "ribi-picom.conf",
-        "ribi-terminal.sh",
-    ):
-        assert (payloads / filename).is_file(), f"missing polish payload: {filename}"
-
-    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    for marker in (
-        'openbox-ribi-themerc',
-        'ribi-Xresources',
-        'ribi-picom.conf',
-        'ribi-terminal.sh',
-    ):
-        assert marker in source, f"builder does not install {marker}"
-
-    assert "picom" in config.TARGET_APK_PACKAGES_DESKTOP
-    assert "lxterminal" in config.TARGET_APK_PACKAGES_DESKTOP
-
-
-def test_default_desktop_apps_present_and_catalogued():
-    """The everyday app set must be installed, validated, and searchable."""
-    from ribi import config
-
-    new_apps = ("galculator", "ristretto", "celluloid", "file-roller", "mousepad", "xdg-utils")
-    for app in new_apps:
-        assert app in config.TARGET_APK_PACKAGES_DESKTOP, f"{app} missing from desktop packages"
-
-    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    for binary in ("usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad"):
-        assert binary in source, f"builder does not validate {binary}"
-
-    launcher = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
-    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
-    for command in ("galculator", "ristretto", "celluloid", "file-roller", "mousepad"):
-        assert command in launcher, f"launcher catalog missing {command}"
-        assert command in dock, f"dock catalog missing {command}"
-
-
-def test_live_squashfs_uses_xz():
-    """The live image should use xz squashfs so the ISO stays small."""
-    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    assert '"-comp", "xz"' in source, "live squashfs must use xz compression"
-
-
-def test_glib_databases_are_compiled():
-    """GLib apps abort without compiled schemas; xdg-open needs mime.cache."""
-    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    assert "glib-compile-schemas" in source, "builder must compile GSettings schemas"
-    assert "update-mime-database" in source, "builder must build the shared-mime database"
-    assert "gschemas.compiled" in source, "builder must validate gschemas.compiled"
-
-
-def test_launcher_enter_activates_from_search_entry():
-    """The search entry consumes Return, so launch must be wired to it too."""
-    source = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
-    assert 'search.connect("activate"' in source, (
-        "Enter is swallowed by the search entry unless 'activate' is connected"
-    )
-    assert '"launched"' in source, "launcher must guard against double-launching"
-
-

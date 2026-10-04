@@ -42,13 +42,15 @@ CATALOG = [
     ("Media Player", "celluloid", "media", "video audio movie music play"),
     ("Archive Manager", "file-roller", "archive", "zip tar extract compress"),
     ("Text Editor", "mousepad", "text", "notepad notes write plain"),
+    ("Document Viewer", "zathura", "pdf", "pdf document reader ebook view"),
+    ("Audacity", "audacity", "audio", "audio sound record edit waveform"),
     ("Screenshot", "ribi-screenshot", "screenshot", "capture screen image"),
     ("Control Center", "ribi-control-center.py", "control", "settings preferences system"),
     ("OBS Studio", "obs --disable-shutdown-check", "obs", "record stream video"),
     ("Snake", "ribi-terminal -e ribi-snake", "games", "game play"),
     ("2048", "ribi-terminal -e ribi-2048", "games", "game play puzzle"),
-    ("Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "install", "installer disk setup"),
-    ("Ribi Setup", "ribi-terminal -e /usr/local/bin/ribi-setup", "control", "first boot welcome"),
+    ("Ribi Doctor", "ribi-terminal -e ribi-doctor", "control", "diagnostics logs health check doctor"),
+    ("Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "install", "install disk setup first boot welcome"),
 ]
 
 LAUNCHER_CSS = """
