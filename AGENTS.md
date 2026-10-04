@@ -117,4 +117,17 @@ Gotchas learned the hard way:
   out of order, which makes a broken UI look like a code bug. Verify GUI
   behaviour with `xdotool` inside the chroot against `Xvfb` (bind `/dev/pts`,
   `/tmp/.X11-unix`, and a real `/dev/null`) before blaming the code.
+- **GLib apps abort unless the schema database is compiled.** Alpine ships the
+  `.gschema.xml` files but never `gschemas.compiled`, so any app that reads a
+  setting (Celluloid, File Roller) crashes with "No GSettings schemas are
+  installed on the system". Stage 5 must run `glib-compile-schemas` in a chroot
+  (there is no host binary), plus `update-mime-database` for `xdg-open` and
+  `update-desktop-database` for the app-menu cache.
+- **Chroot GUI tests need real `/proc` for bwrap.** glycin (gdk-pixbuf's modern
+  image backend) sandboxes each decode with `bwrap --unshare-all`. With no
+  `/proc` in the chroot, or on a host that forbids unprivileged user namespaces,
+  the loader exits early and *every* image load fails with "Couldn't recognize
+  the image file format" — even a valid PNG. Mount `/proc` before testing; glycin
+  then falls back to "running without sandbox" and decoding works. This is a
+  test-harness artifact, not an image bug.
 
