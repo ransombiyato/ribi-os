@@ -198,6 +198,14 @@ def test_live_squashfs_uses_xz():
     assert '"-comp", "xz"' in source, "live squashfs must use xz compression"
 
 
+def test_glib_databases_are_compiled():
+    """GLib apps abort without compiled schemas; xdg-open needs mime.cache."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert "glib-compile-schemas" in source, "builder must compile GSettings schemas"
+    assert "update-mime-database" in source, "builder must build the shared-mime database"
+    assert "gschemas.compiled" in source, "builder must validate gschemas.compiled"
+
+
 def test_launcher_enter_activates_from_search_entry():
     """The search entry consumes Return, so launch must be wired to it too."""
     source = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")

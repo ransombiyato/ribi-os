@@ -586,6 +586,17 @@ gtk-enable-animations=false
         if ld.is_dir() and q.exists():
             r = subprocess.run(["chroot", str(DIR_ROOTFS), "/usr/bin/gdk-pixbuf-query-loaders"], capture_output=True, text=True)
             if r.returncode == 0: write_file(ld / "loaders.cache", r.stdout)
+        # Compile the GSettings and shared-mime databases. Without
+        # gschemas.compiled any GLib app that reads a setting (Celluloid,
+        # File Roller) aborts with "No GSettings schemas are installed", and
+        # without mime.cache xdg-open cannot map file types to applications.
+        schemas_dir = DIR_ROOTFS / "usr/share/glib-2.0/schemas"
+        if (DIR_ROOTFS / "usr/bin/glib-compile-schemas").exists() and schemas_dir.is_dir():
+            subprocess.run(["chroot", str(DIR_ROOTFS), "/usr/bin/glib-compile-schemas", "/usr/share/glib-2.0/schemas"], check=False)
+        if (DIR_ROOTFS / "usr/bin/update-mime-database").exists() and (DIR_ROOTFS / "usr/share/mime").is_dir():
+            subprocess.run(["chroot", str(DIR_ROOTFS), "/usr/bin/update-mime-database", "/usr/share/mime"], check=False)
+        if (DIR_ROOTFS / "usr/bin/update-desktop-database").exists() and (DIR_ROOTFS / "usr/share/applications").is_dir():
+            subprocess.run(["chroot", str(DIR_ROOTFS), "/usr/bin/update-desktop-database", "/usr/share/applications"], check=False)
         # Remove distro package-manager/boot-service state. Ribi owns PID 1 and
         # service supervision; Alpine/OpenRC metadata must not leak into the target.
         for rel in ["etc/init.d", "etc/conf.d", "etc/runlevels", "etc/rc.conf",
@@ -1757,6 +1768,9 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
             for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
                 if not (DIR_ROOTFS / rel).exists():
                     raise RuntimeError(f"Validation Failed: Ribi desktop payload missing: /{rel}")
+            for rel in ("usr/share/glib-2.0/schemas/gschemas.compiled", "usr/share/mime/mime.cache"):
+                if not (DIR_ROOTFS / rel).exists():
+                    raise RuntimeError(f"Validation Failed: GLib runtime database missing: /{rel}")
 
         # Ensure generated GRUB config and live payload agree.
         grub=(DIR_ISO/"boot/grub/grub.cfg").read_text(); 
