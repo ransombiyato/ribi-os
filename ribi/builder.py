@@ -517,6 +517,13 @@ Type=Fixed
             "accessories-text-editor": "polygon 18%,8% 82%,8% 82%,92% 18%,92%",
             "camera-photo": "roundrectangle 8%,24% 92%,80% 3,3",
             "obs": "circle 8%,8% 92%,92%",
+            "accessories-calculator": "roundrectangle 12%,8% 88%,92% 3,3",
+            "image-x-generic": "roundrectangle 8%,20% 92%,84% 3,3",
+            "multimedia-player": "polygon 30%,16% 84%,50% 30%,84%",
+            "package-x-generic": "polygon 50%,8% 90%,30% 90%,70% 50%,92% 10%,70% 10%,30%",
+            "applications-internet": "circle 8%,8% 92%,92% line 8%,50% 92%,50%",
+            "preferences-desktop-display": "roundrectangle 8%,18% 92%,72% 3,3 line 50%,72% 50%,90%",
+            "preferences-desktop-theme": "circle 26%,26% 74%,74% circle 50%,50% 66%,66%",
         }
         palette = ("#39c5ff", "#ff4f81", "#ffd43b", "#66d17a", "#b98cff")
         for size in (16, 24, 32, 48, 64):
@@ -1291,6 +1298,11 @@ exec /sbin/poweroff -f
             ("zen-browser-ribi.desktop", "Zen Browser", "zen-browser %U", "zen-browser", "Network;WebBrowser;", False),
             ("obs-studio-ribi.desktop", "OBS Studio", "obs --disable-shutdown-check", "obs", "AudioVideo;Recorder;", False),
             ("ribi-screenshot.desktop", "Ribi Screenshot", "ribi-screenshot", "camera-photo", "Graphics;Utility;", False),
+            ("ribi-calculator.desktop", "Calculator", "galculator", "accessories-calculator", "Utility;Calculator;", False),
+            ("ribi-image-viewer.desktop", "Image Viewer", "ristretto %U", "image-x-generic", "Graphics;Viewer;", False),
+            ("ribi-media-player.desktop", "Media Player", "celluloid %U", "multimedia-player", "AudioVideo;Player;", False),
+            ("ribi-archive-manager.desktop", "Archive Manager", "file-roller %U", "package-x-generic", "Utility;Archiving;", False),
+            ("ribi-text-editor.desktop", "Text Editor", "mousepad %F", "accessories-text-editor", "Utility;TextEditor;", False),
             ("ribi-control-center.desktop", "Ribi Control Center", "ribi-control-center.py", "preferences-system", "System;Settings;", False),
             ("ribi-installer.desktop", "Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "system-software-install", "System;", True),
             ("ribi-setup.desktop", "Setup Ribi OS", "xterm -hold -e /usr/local/bin/ribi-setup", "system-software-install", "System;Settings;", False),
@@ -1503,7 +1515,9 @@ exec /sbin/poweroff -f
             "mksquashfs",
             str(DIR_ROOTFS),
             str(squashfs_file),
-            "-comp", "gzip", "-b", "1M", "-Xcompression-level", "1",
+            # xz with the x86 BCJ filter roughly halves the live image versus the
+            # old gzip level 1, and the kernel ships CONFIG_SQUASHFS_XZ=y.
+            "-comp", "xz", "-b", "1M", "-Xbcj", "x86",
             "-no-xattrs",
             "-e", "boot",
             "-wildcards",
@@ -1740,7 +1754,7 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
             if leaked:
                 raise RuntimeError(f"Validation Failed: no-desktop release contains GUI artifacts: {leaked}")
         else:
-            for rel in ("usr/bin/Xorg", "usr/bin/startx", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
+            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
                 if not (DIR_ROOTFS / rel).exists():
                     raise RuntimeError(f"Validation Failed: Ribi desktop payload missing: /{rel}")
 

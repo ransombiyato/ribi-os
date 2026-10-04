@@ -32,6 +32,12 @@ PALETTE = {
     "screenshot": "#b98cff",
     "control": "#39c5ff",
     "obs": "#ff4f81",
+    "calculator": "#ffd43b",
+    "image": "#b98cff",
+    "media": "#ff4f81",
+    "archive": "#ffd43b",
+    "text": "#66d17a",
+    "display": "#39c5ff",
     "folder": "#ffd43b",
     "file": "#9fb0c8",
     "back": "#9fb0c8",
@@ -281,6 +287,60 @@ def draw_glyph(ctx, name, size):
         ctx.stroke()
         ctx.move_to(m, m + s * 0.86)
         ctx.line_to(m + s, m + s * 0.86)
+        ctx.stroke()
+    elif name == "calculator":
+        _rounded_rect(ctx, m, m, s, s, s * 0.12)
+        ctx.stroke()
+        ctx.rectangle(m + s * 0.12, m + s * 0.12, s * 0.76, s * 0.22)
+        ctx.fill()
+        for gx in (0.16, 0.42, 0.68):
+            for gy in (0.48, 0.74):
+                ctx.arc(m + s * gx, m + s * gy, s * 0.06, 0, 2 * math.pi)
+                ctx.fill()
+    elif name == "image":
+        _rounded_rect(ctx, m, m + s * 0.12, s, s * 0.76, s * 0.1)
+        ctx.stroke()
+        ctx.arc(m + s * 0.3, m + s * 0.34, s * 0.08, 0, 2 * math.pi)
+        ctx.fill()
+        ctx.move_to(m + s * 0.12, m + s * 0.82)
+        ctx.line_to(m + s * 0.42, m + s * 0.5)
+        ctx.line_to(m + s * 0.62, m + s * 0.68)
+        ctx.line_to(m + s * 0.78, m + s * 0.54)
+        ctx.line_to(m + s * 0.92, m + s * 0.82)
+        ctx.close_path()
+        ctx.fill()
+    elif name == "media":
+        ctx.move_to(m + s * 0.18, m)
+        ctx.line_to(m + s * 0.9, cy)
+        ctx.line_to(m + s * 0.18, m + s)
+        ctx.close_path()
+        ctx.fill()
+    elif name == "archive":
+        _rounded_rect(ctx, m, m, s, s, s * 0.1)
+        ctx.stroke()
+        ctx.move_to(cx - s * 0.09, m)
+        ctx.line_to(cx - s * 0.09, m + s * 0.5)
+        ctx.move_to(cx + s * 0.09, m)
+        ctx.line_to(cx + s * 0.09, m + s * 0.5)
+        ctx.stroke()
+        ctx.arc(cx, m + s * 0.62, s * 0.09, 0, 2 * math.pi)
+        ctx.fill()
+    elif name == "text":
+        _rounded_rect(ctx, m + s * 0.12, m, s * 0.76, s, s * 0.08)
+        ctx.stroke()
+        for i in range(4):
+            y = m + s * (0.2 + i * 0.2)
+            ctx.move_to(m + s * 0.26, y)
+            ctx.line_to(m + s * 0.74, y)
+        ctx.stroke()
+    elif name == "display":
+        _rounded_rect(ctx, m, m + s * 0.1, s, s * 0.62, s * 0.08)
+        ctx.stroke()
+        ctx.move_to(cx, m + s * 0.72)
+        ctx.line_to(cx, m + s * 0.9)
+        ctx.stroke()
+        ctx.move_to(cx - s * 0.24, m + s * 0.9)
+        ctx.line_to(cx + s * 0.24, m + s * 0.9)
         ctx.stroke()
     else:
         ctx.arc(cx, cy, s * 0.4, 0, 2 * math.pi)

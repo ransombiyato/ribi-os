@@ -173,6 +173,31 @@ def test_polish_payloads_present_and_installed():
     assert "lxterminal" in config.TARGET_APK_PACKAGES_DESKTOP
 
 
+def test_default_desktop_apps_present_and_catalogued():
+    """The everyday app set must be installed, validated, and searchable."""
+    from ribi import config
+
+    new_apps = ("galculator", "ristretto", "celluloid", "file-roller", "mousepad", "xdg-utils")
+    for app in new_apps:
+        assert app in config.TARGET_APK_PACKAGES_DESKTOP, f"{app} missing from desktop packages"
+
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    for binary in ("usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad"):
+        assert binary in source, f"builder does not validate {binary}"
+
+    launcher = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
+    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
+    for command in ("galculator", "ristretto", "celluloid", "file-roller", "mousepad"):
+        assert command in launcher, f"launcher catalog missing {command}"
+        assert command in dock, f"dock catalog missing {command}"
+
+
+def test_live_squashfs_uses_xz():
+    """The live image should use xz squashfs so the ISO stays small."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert '"-comp", "xz"' in source, "live squashfs must use xz compression"
+
+
 def test_launcher_enter_activates_from_search_entry():
     """The search entry consumes Return, so launch must be wired to it too."""
     source = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
