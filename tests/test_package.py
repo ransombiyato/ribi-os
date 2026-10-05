@@ -236,7 +236,34 @@ def test_installer_is_the_single_setup_flow():
     assert "ribi-setup" not in source, "ribi-setup must not be installed or catalogued"
     installer = (REPO / "ribi" / "sources" / "ribi-installer.py").read_text(encoding="utf-8")
     assert "def wizard" in installer, "the installer must own the guided setup wizard"
-    assert "erase-install" in installer and "persistence" in installer
+    assert "def prepare_persistence" in installer, "the wizard must offer the data/persistence mode"
+
+
+def test_installer_matches_alpine_wording():
+    """The questions and their wording must follow Alpine's setup-* family."""
+    installer = (REPO / "ribi" / "sources" / "ribi-installer.py").read_text(encoding="utf-8")
+    for marker in (
+        "def ask_yesno",
+        "Enter system hostname (fully qualified form",
+        "Which timezone are you in?",
+        "Select keyboard layout:",
+        "Which NTP client to run?",
+        "Which ssh server?",
+        "Which one do you want to initialize?",
+        "DNS nameserver(s)?",
+        "Which disk(s) would you like to use?",
+        "How would you like to use it? ('sys', 'data' or '?')",
+        "WARNING: Erase the above disk(s) and continue?",
+    ):
+        assert marker in installer, f"installer missing Alpine-style wording: {marker!r}"
+
+
+def test_boot_applies_console_keymap():
+    """The keymap chosen at setup must be loaded on boot, not just written."""
+    init = (REPO / "ribi" / "sources" / "ribi-init.sh").read_text(encoding="utf-8")
+    assert "/etc/conf.d/keymaps" in init, "boot must read the saved keymap"
+    assert "loadkmap" in init, "boot must load the console keymap"
+    assert "gzip -dc" in init, "kbd keymaps are gzipped and must be decompressed"
 
 
 def test_dock_has_open_window_taskbar():

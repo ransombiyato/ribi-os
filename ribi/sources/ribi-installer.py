@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """ribi-installer - the single Ribi OS setup and installation wizard.
 
-One guided flow covers everything a first boot or an install needs, the way a
-mainstream OS presents a single "Install / Set up" program instead of a setup
-tool and a separate installer:
+The questions and their wording follow Alpine's `setup-alpine` family so the
+flow feels familiar to anyone who has installed Alpine. One guided pass covers
+everything a first boot or a disk install needs:
 
-  1. system identity   - hostname and timezone
-  2. networking        - interface, DHCP or manual, applied immediately
-  3. storage           - erase and install to disk, prepare live persistence,
-                         or keep the RAM-only live session
+  1. keyboard, hostname, network, DNS   (setup-keymap/hostname/interfaces/dns)
+  2. root password, timezone, NTP, SSH  (setup-alpine/sshd/ntp)
+  3. storage                            (setup-disk: sys / data / none)
 
 Safety is unchanged from the original disk installer: a target disk must be
-unmounted, the running root is protected, the target must be re-typed, and a
-destructive action requires an explicit YES.
+unmounted, the running root is protected, and a destructive action requires an
+explicit yes (y/n).
 """
 
+import json
 import os
 import re
 import shutil
@@ -26,6 +26,31 @@ from pathlib import Path
 MOUNT_DIR = "/tmp/ribi_target"
 LIVE_ROOT = "/run/rootfs"
 SETUP_CONF = "/etc/ribi/setup.conf"
+
+# Alpine-style keyboard layouts shipped by the kbd package. The value is the
+# console keymap (loadkmap) and the XKB layout name for X.
+KEYMAP_LAYOUTS = {
+    "us": ("us", "us"),
+    "gb": ("gb", "gb"),
+    "de": ("de", "de"),
+    "fr": ("fr", "fr"),
+    "es": ("es", "es"),
+    "it": ("it", "it"),
+    "pt": ("pt", "pt"),
+    "br": ("br", "br"),
+    "ru": ("ru", "ru"),
+    "pl": ("pl", "pl"),
+    "nl": ("nl", "nl"),
+    "se": ("se", "se"),
+    "no": ("no", "no"),
+    "dk": ("dk", "dk"),
+    "fi": ("fi-classic", "fi"),
+    "tr": ("tr", "tr"),
+    "cz": ("cz", "cz"),
+    "hu": ("hu", "hu"),
+    "ch": ("ch", "ch"),
+    "ca": ("ca", "ca"),
+}
 
 
 # --------------------------------------------------------------------------
@@ -41,19 +66,38 @@ def run(cmd):
 
 
 def ask(question, default=""):
-    value = input(f"{question} [{default}]: ").strip()
+    """Alpine `ask`: show the default in brackets only when there is one."""
+    suffix = f" [{default}]" if default else ""
+    value = input(f"{question}{suffix}: ").strip()
     return value or default
 
 
-def yes(question):
-    return input(question + " Type YES to continue: ").strip() == "YES"
+def ask_yesno(question, default="n"):
+    """Alpine `ask_yesno`: accept y/yes or n/no, default on blank."""
+    while True:
+        value = input(f"{question} (y/n) ").strip().lower()
+        if not value:
+            value = default
+        if value in ("y", "yes"):
+            return True
+        if value in ("n", "no"):
+            return False
+        print("Please answer 'y' or 'n'.")
 
 
-def choices(question, values, default):
-    value = ask(question, default).lower()
-    if value not in values:
-        raise SystemExit(f"Invalid choice '{value}'. Choose one of: {', '.join(values)}")
-    return value
+def ask_pass(prompt, confirm_prompt="Retype password: "):
+    """Prompt for a password twice (like `passwd`), returning None if skipped."""
+    import getpass
+
+    while True:
+        first = getpass.getpass(prompt)
+        if not first:
+            return None
+        second = getpass.getpass(confirm_prompt)
+        if first != second:
+            print("Passwords do not match. Please retry.")
+            continue
+        return first
 
 
 def interfaces():
@@ -79,42 +123,86 @@ def storage_rows():
     return rows
 
 
+def whole_disks():
+    """Just the whole disks, like setup-disk offers (not partitions)."""
+    return [row for row in storage_rows() if row[1] == "disk"]
+
+
+def _disk_info(device):
+    """Alpine's show_disk_info: size, label/model for the erase warning."""
+    row = sh(["lsblk", "-dnro", "SIZE,LABEL,MODEL", device]).stdout.strip()
+    return [part for part in row.split("  ") if part.strip()] or [row]
+
+
 # --------------------------------------------------------------------------
 # networking
 # --------------------------------------------------------------------------
 
-def configure_network():
-    print("\n=== Networking ===")
-    detected = interfaces()
-    interface = ask(
-        "Network interface (detected: " + (", ".join(detected) or "none") + ")",
-        detected[0] if detected else "eth0",
-    )
-    ipv4 = choices("IPv4 mode (dhcp/manual)", {"dhcp", "manual"}, "dhcp")
-    ipv4addr = gateway = dns = ""
-    if ipv4 == "manual":
-        ipv4addr = ask("IPv4 address/CIDR", "192.168.1.100/24")
-        gateway = ask("Gateway", "192.168.1.1")
-        dns = ask("DNS", "1.1.1.1")
-    ipv6 = choices("IPv6 mode (auto/disabled/manual)", {"auto", "disabled", "manual"}, "auto")
-
-    try:
-        if ipv4 == "manual":
-            run(["ip", "addr", "add", ipv4addr, "dev", interface])
-            if gateway:
-                run(["ip", "route", "add", "default", "via", gateway])
-            if dns:
-                Path("/etc/resolv.conf").write_text(f"nameserver {dns}\n")
+def configure_interfaces():
+    """setup-interfaces: pick an interface and an addressing method."""
+    print("\nAvailable interfaces are: " + (" ".join(interfaces()) or "none"))
+    interface = ask("Which one do you want to initialize? (or 'done')",
+                    interfaces()[0] if interfaces() else "eth0")
+    ipv4 = "dhcp"
+    ipv4addr = netmask = gateway = ""
+    if interface and interface != "done":
+        answer = ask(f"IPv4 address for {interface}? (or 'dhcp', 'none')", "dhcp").lower()
+        if answer == "dhcp":
+            ipv4 = "dhcp"
+        elif answer == "none":
+            ipv4 = "none"
         else:
+            ipv4 = "manual"
+            if "/" in answer:
+                ipv4addr, netmask = answer.split("/", 1)
+            else:
+                ipv4addr = answer
+                netmask = ask("Netmask?", "24")
+            gateway = ask("Gateway? (or 'none')", "")
+            if gateway == "none":
+                gateway = ""
+        answer = ask(f"IPv6 address for {interface}? (or 'dhcp', 'none')", "none").lower()
+        ipv6 = "auto" if answer in ("dhcp", "auto") else "none"
+    else:
+        interface, ipv6 = "", "none"
+
+    if interface and ipv4 == "dhcp":
+        try:
             if shutil.which("dhcpcd"):
                 run(["dhcpcd", "-q", interface])
             elif shutil.which("udhcpc"):
                 run(["udhcpc", "-i", interface, "-n", "-q"])
-        print(f"[+] Network configured on {interface}.")
-    except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"[!] Could not apply the network settings now: {exc}")
-        print("    The settings are still saved and will be used on the next boot.")
-    return {"interface": interface, "ipv4": ipv4, "ipv6": ipv6}
+            print(f"[+] Network configured on {interface}.")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"[!] Could not apply the network settings now: {exc}")
+    elif interface and ipv4 == "manual":
+        try:
+            address = f"{ipv4addr}/{netmask}"
+            run(["ip", "addr", "add", address, "dev", interface])
+            if gateway:
+                run(["ip", "route", "add", "default", "via", gateway])
+            print(f"[+] Network configured on {interface}.")
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"[!] Could not apply the network settings now: {exc}")
+    return {"interface": interface, "ipv4": ipv4, "ipv4addr": ipv4addr,
+            "netmask": netmask, "gateway": gateway, "ipv6": ipv6}
+
+
+def configure_dns():
+    """setup-dns: optional search domain and nameservers."""
+    domain = ask("DNS domain name? (e.g 'bar.com')", "")
+    nameservers = ask("DNS nameserver(s)?", "")
+    if domain or nameservers:
+        lines = []
+        if domain:
+            lines.append(f"search {domain}")
+        for server in nameservers.split():
+            lines.append(f"nameserver {server}")
+        try:
+            Path("/etc/resolv.conf").write_text("\n".join(lines) + "\n")
+        except OSError as exc:
+            print(f"[!] Could not write /etc/resolv.conf: {exc}")
+    return {"dns_domain": domain, "dns_nameservers": nameservers}
 
 
 # --------------------------------------------------------------------------
@@ -122,14 +210,19 @@ def configure_network():
 # --------------------------------------------------------------------------
 
 def prepare_persistence(device, conf):
+    """'data' mode: use the disk(s) for storage, not for the operating system.
+
+    The system still runs from RAM; this only lays down the persistent overlay
+    the live init discovers via the .ribi-persistence marker.
+    """
     fstype = sh(["blkid", "-s", "TYPE", "-o", "value", device]).stdout.strip()
     if fstype != "ext4":
-        print("Persistence requires an ext4 filesystem on the selected device.")
-        print("Choose 'erase' to create one, or pick another device.")
-        return 1
-    if not yes(f"Prepare {device} for Ribi persistent storage?"):
-        print("Persistence cancelled.")
-        return 1
+        print("Persistence needs an ext4 filesystem on the selected device.")
+        if ask_yesno(f"Format {device} as ext4? ALL DATA WILL BE LOST", "n"):
+            run(["mkfs.ext4", "-F", "-L", "RibiPersistence", device])
+        else:
+            print("Persistence cancelled.")
+            return 1
     mount = "/run/ribi-persistence-storage"
     Path(mount).mkdir(exist_ok=True)
     try:
@@ -262,9 +355,9 @@ def install_to_disk(device, conf):
     if sh(["lsblk", "-dn", "-o", "TYPE", device]).stdout.strip() != "disk":
         raise SystemExit("Error: Target must be a whole disk.")
     preflight_target(device)
-    if input(f"Re-enter target device exactly ({device}) to confirm: ").strip() != device:
-        raise SystemExit("Installation aborted: target confirmation did not match.")
-    if input(f"WARNING: ALL DATA ON {device} WILL BE ERASED! Type 'YES': ").strip() != "YES":
+    print("\nWARNING: The following disk(s) will be erased:")
+    print(f"  {device}  " + " | ".join(_disk_info(device)))
+    if not ask_yesno("WARNING: Erase the above disk(s) and continue?", "n"):
         raise SystemExit("Installation aborted.")
 
     uefi = os.path.isdir("/sys/firmware/efi")
@@ -318,9 +411,8 @@ def install_to_disk(device, conf):
         # The installed system gets its own fstab, machine-id, and the settings
         # collected earlier instead of live-media assumptions.
         os.makedirs(MOUNT_DIR + "/etc", exist_ok=True)
-        Path(MOUNT_DIR + "/etc/hostname").write_text(conf["hostname"] + "\n")
-        Path(MOUNT_DIR + "/etc/ribi").mkdir(parents=True, exist_ok=True)
-        Path(MOUNT_DIR + SETUP_CONF).write_text(_conf_text(conf))
+        apply_identity(MOUNT_DIR, conf)
+        apply_passwords(MOUNT_DIR, conf)
         uuid_root = sh(["blkid", "-s", "UUID", "-o", "value", root]).stdout.strip()
         lines = [f"UUID={uuid_root} / ext4 defaults 0 1"]
         if esp:
@@ -371,13 +463,10 @@ def install_to_disk(device, conf):
 # --------------------------------------------------------------------------
 
 def _conf_text(conf):
-    return (
-        f"hostname={conf['hostname']}\n"
-        f"interface={conf['interface']}\n"
-        f"ipv4={conf['ipv4']}\n"
-        f"ipv6={conf['ipv6']}\n"
-        f"timezone={conf['timezone']}\n"
-    )
+    keys = ("hostname", "interface", "ipv4", "ipv4addr", "netmask", "gateway", "ipv6",
+            "dns_domain", "dns_nameservers", "timezone", "keymap", "xkb_layout",
+            "ntp", "ssh", "root_ssh", "username")
+    return "".join(f"{key}={conf.get(key, '')}\n" for key in keys)
 
 
 def _save_conf(conf):
@@ -385,70 +474,325 @@ def _save_conf(conf):
     Path(SETUP_CONF).write_text(_conf_text(conf))
 
 
+def choose_keymap():
+    """setup-keymap: console keymap and X layout from one layout name."""
+    layouts = " ".join(sorted(KEYMAP_LAYOUTS))
+    print("\nAvailable keyboard layouts are: " + layouts)
+    layout = ask("Select keyboard layout:", "us").lower()
+    while layout not in KEYMAP_LAYOUTS:
+        print(f"'{layout}' is not a supported layout.")
+        layout = ask("Select keyboard layout:", "us").lower()
+    console, xkb = KEYMAP_LAYOUTS[layout]
+    return {"keymap": console, "xkb_layout": xkb, "layout_name": layout}
+
+
+def configure_ntp():
+    """setup-ntp: busybox ntpd or none."""
+    while True:
+        client = ask("Which NTP client to run? ('busybox' or 'none')", "busybox").lower()
+        if client in ("busybox", "none"):
+            return client
+        print(f"'{client}' is not a supported NTP client")
+
+
+def configure_sshd():
+    """setup-sshd: openssh (installed on demand) or none."""
+    while True:
+        server = ask("Which ssh server? ('openssh' or 'none')", "openssh").lower()
+        if server in ("openssh", "none"):
+            return server
+        print(f"'{server}' is not a supported ssh server")
+
+
+def configure_user():
+    """setup-user: set a password for the desktop login name."""
+    username = ask("Setup a user? (enter a lower-case loginname, or 'no')", "ribi").lower()
+    if username in ("no", "none", ""):
+        return {"username": "", "user_password": ""}
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]*", username):
+        print("Invalid login name; skipping user setup.")
+        return {"username": "", "user_password": ""}
+    password = ask_pass(f"New password for {username}: ")
+    return {"username": username, "user_password": password}
+
+
+def configure_root_ssh(ssh):
+    """setup-sshd: whether root may log in over ssh."""
+    if ssh != "openssh":
+        return "no"
+    while True:
+        answer = ask("Allow root ssh login? ('yes' or 'no')", "no").lower()
+        if answer in ("yes", "no"):
+            return answer
+        print("Please answer 'yes' or 'no'.")
+
+
+def _apply_xkb_layout(xorg_conf, layout):
+    """Put XkbLayout into the keyboard InputClass of an existing xorg.conf.
+
+    ribi-init starts X with `-config /etc/X11/xorg.conf`, which replaces the
+    whole config search, so an xorg.conf.d snippet would be ignored.
+    """
+    conf = Path(xorg_conf)
+    if not conf.is_file():
+        return
+    option = f'    Option "XkbLayout" "{layout}"\n'
+    lines = conf.read_text(encoding="utf-8").splitlines(keepends=True)
+    out, in_keyboard, inserted = [], False, False
+    for line in lines:
+        if line.lstrip().startswith('Section "InputClass"'):
+            in_keyboard = False
+        if "MatchIsKeyboard" in line:
+            in_keyboard = True
+        if in_keyboard and line.lstrip().startswith("EndSection") and not inserted:
+            out.append(option)
+            inserted = True
+            in_keyboard = False
+        out.append(line)
+    if not inserted:
+        out.append('\nSection "InputClass"\n    Identifier "system-keyboard"\n'
+                   '    MatchIsKeyboard "on"\n' + option + 'EndSection\n')
+    conf.write_text("".join(out), encoding="utf-8")
+
+
+def apply_identity(target_root, conf):
+    """Write identity, timezone, keymap and NTP settings into the target tree."""
+    target = Path(target_root)
+    (target / "etc").mkdir(parents=True, exist_ok=True)
+    (target / "etc/hostname").write_text(conf["hostname"] + "\n")
+
+    zone = target / "usr/share/zoneinfo" / conf["timezone"]
+    if zone.is_file():
+        localtime = target / "etc/localtime"
+        if localtime.exists() or localtime.is_symlink():
+            localtime.unlink()
+        try:
+            os.symlink(f"/usr/share/zoneinfo/{conf['timezone']}", localtime)
+        except OSError:
+            shutil.copy2(zone, localtime)
+    (target / "etc/timezone").write_text(conf["timezone"] + "\n")
+
+    (target / "etc/conf.d").mkdir(parents=True, exist_ok=True)
+    (target / "etc/conf.d/keymaps").write_text(
+        f'keymap="{conf["keymap"]}"\nwindowkeys="NO"\n')
+    (target / "etc/X11/xorg.conf.d").mkdir(parents=True, exist_ok=True)
+    (target / "etc/X11/xorg.conf.d/00-keyboard.conf").write_text(
+        'Section "InputClass"\n'
+        '    Identifier "system-keyboard"\n'
+        '    MatchIsKeyboard "on"\n'
+        f'    Option "XkbLayout" "{conf["xkb_layout"]}"\n'
+        'EndSection\n')
+    _apply_xkb_layout(target / "etc/X11/xorg.conf", conf["xkb_layout"])
+
+    (target / "etc/ribi").mkdir(parents=True, exist_ok=True)
+    (target / SETUP_CONF.lstrip("/")).write_text(_conf_text(conf))
+
+    services = target / "etc/ribi/services"
+    services.mkdir(parents=True, exist_ok=True)
+    ntp_file = services / "ntp.json"
+    if conf.get("ntp") == "busybox":
+        ntp_file.write_text(json.dumps({
+            "name": "ntp",
+            "description": "BusyBox NTP client",
+            "start_command": ["/usr/sbin/ntpd", "-n", "-p", "/run/ntpd.pid"],
+            "enabled": True,
+        }, indent=2))
+    elif ntp_file.exists():
+        ntp_file.unlink()
+
+    sshd_file = services / "sshd.json"
+    ssh_request = target / "etc/ribi/ssh.requested"
+    if conf.get("ssh") == "openssh":
+        # openssh is installed on first boot (apk is available in the image);
+        # the service entry makes ribisvc start it once it exists.
+        ssh_request.write_text("openssh\n")
+        sshd_file.write_text(json.dumps({
+            "name": "sshd",
+            "description": "OpenSSH server",
+            "start_command": ["/usr/sbin/sshd", "-D"],
+            "enabled": True,
+        }, indent=2))
+        if conf.get("root_ssh") == "yes":
+            sshd_config = target / "etc/ssh/sshd_config"
+            if sshd_config.is_file():
+                text = sshd_config.read_text(encoding="utf-8")
+                if "PermitRootLogin" not in text:
+                    sshd_config.write_text(text + "\nPermitRootLogin yes\n")
+    else:
+        for stale in (sshd_file, ssh_request):
+            if stale.exists():
+                stale.unlink()
+
+
+def apply_passwords(target_root, conf):
+    target = Path(target_root)
+    if not (target / "etc/shadow").is_file():
+        return
+    entries = []
+    if conf.get("root_password"):
+        entries.append(f"root:{conf['root_password']}")
+    user = conf.get("username")
+    if user and conf.get("user_password"):
+        entries.append(f"{user}:{conf['user_password']}")
+    if not entries:
+        return
+    result = subprocess.run(
+        ["chpasswd", "-R", str(target)],
+        input="\n".join(entries) + "\n", text=True, capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        print(f"[!] Could not set the account password(s): {result.stderr.strip()}")
+
+
+def apply_live_passwords(conf):
+    """Set the root (and desktop user) password in the running live session."""
+    if conf.get("root_password"):
+        subprocess.run(["chpasswd"], input=f"root:{conf['root_password']}\n",
+                       text=True, capture_output=True, check=False)
+    if conf.get("username") and conf.get("user_password"):
+        subprocess.run(["chpasswd"],
+                       input=f"{conf['username']}:{conf['user_password']}\n",
+                       text=True, capture_output=True, check=False)
+
+
+def apply_live_session(conf):
+    """Apply the identity settings to the running live session (best effort)."""
+    subprocess.run(["hostname", conf["hostname"]], check=False)
+    Path("/etc/hostname").write_text(conf["hostname"] + "\n")
+    Path("/etc/timezone").write_text(conf["timezone"] + "\n")
+    zone = Path("/usr/share/zoneinfo") / conf["timezone"]
+    if zone.is_file():
+        localtime = Path("/etc/localtime")
+        if localtime.exists() or localtime.is_symlink():
+            localtime.unlink()
+        try:
+            os.symlink(f"/usr/share/zoneinfo/{conf['timezone']}", localtime)
+        except OSError:
+            shutil.copy2(zone, localtime)
+    Path("/etc/conf.d").mkdir(parents=True, exist_ok=True)
+    Path("/etc/conf.d/keymaps").write_text(f'keymap="{conf["keymap"]}"\nwindowkeys="NO"\n')
+    keymap = Path("/usr/share/keymaps") / conf["keymap"]
+    if not keymap.exists():
+        keymap = Path("/usr/share/keymaps/xkb") / f"{conf['keymap']}.map.gz"
+    if keymap.exists() and shutil.which("loadkmap"):
+        with open(keymap, "rb") as handle:
+            subprocess.run(["loadkmap"], stdin=handle, check=False)
+    _apply_xkb_layout("/etc/X11/xorg.conf", conf["xkb_layout"])
+
+
+def _choose_disk(disks, prompt):
+    """Alpine ask_disk: list disks, accept a number or /dev path."""
+    while True:
+        for index, row in enumerate(disks):
+            print(f"  {index}: " + " | ".join(row))
+        print()
+        answer = ask(prompt, disks[0][0] if disks else "")
+        if answer in ("none", "abort"):
+            return ""
+        if answer.isdigit() and int(answer) < len(disks):
+            return disks[int(answer)][0]
+        if answer.startswith("/dev/") and Path(answer).exists():
+            return answer
+        print(f"'{answer}' is not a listed disk.")
+
+
 def wizard():
     if os.geteuid() != 0:
         raise SystemExit("Ribi OS setup must run as administrator.")
     print("\n=== Ribi OS Setup & Installer ===\n")
-    print("One wizard sets up this system: identity, networking, and storage.")
-    print("Nothing is erased unless you explicitly type YES.\n")
+    print("One wizard sets up this system: keyboard, hostname, network, identity,")
+    print("and storage. Questions follow the Alpine installer.\n")
 
-    hostname = ask("Hostname", "ribi")
+    keymap = choose_keymap()
+    hostname = ask("Enter system hostname (fully qualified form, e.g. 'foo.example.org')", "ribi")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", hostname):
         raise SystemExit("Invalid hostname. Use letters, numbers, dots, and hyphens.")
-    timezone = ask("Timezone", "UTC")
 
-    net = configure_network()
+    net = configure_interfaces()
+    dns = configure_dns()
+
+    print("\n=== Root Password ===")
+    print("(leave blank to keep the account passwordless)")
+    root_password = ask_pass("New password: ")
+
+    user = configure_user()
+
+    timezone = ask("Which timezone are you in? (or '?' or 'none')", "UTC")
+    if timezone in ("none", "?"):
+        timezone = "UTC"
+    while not (Path("/usr/share/zoneinfo") / timezone).is_file():
+        print(f"'{timezone}' is not a valid timezone on this system")
+        timezone = ask("Which timezone are you in? (or '?' or 'none')", "UTC")
+        if timezone in ("none", "?"):
+            timezone = "UTC"
+            break
+
+    ntp = configure_ntp()
+    ssh = configure_sshd()
+    root_ssh = configure_root_ssh(ssh)
+
     conf = {
         "hostname": hostname,
         "timezone": timezone,
-        "interface": net["interface"],
-        "ipv4": net["ipv4"],
-        "ipv6": net["ipv6"],
+        "keymap": keymap["keymap"],
+        "xkb_layout": keymap["xkb_layout"],
+        "ntp": ntp,
+        "ssh": ssh,
+        "root_ssh": root_ssh,
+        "root_password": root_password,
+        **user,
+        **{k: net[k] for k in ("interface", "ipv4", "ipv4addr", "netmask", "gateway", "ipv6")},
+        **dns,
     }
     _save_conf(conf)
+    apply_live_session(conf)
+    apply_live_passwords(conf)
 
     print("\n=== Storage ===")
-    rows = storage_rows()
-    for index, row in enumerate(rows):
-        print(f"  {index}: " + " | ".join(row))
-    selected = ""
-    if rows:
-        raw = ask("Enter device path or number (blank = keep RAM-only live session)", "")
-        if raw.isdigit() and int(raw) < len(rows):
-            selected = rows[int(raw)][0]
-        else:
-            selected = raw
-    mode = choices(
-        "Disk use (erase-install/persistence/ram-only)",
-        {"erase-install", "persistence", "ram-only"},
-        "erase-install" if selected else "ram-only",
-    )
-
-    if mode == "ram-only" or not selected:
-        print("\n[+] Keeping RAM-only mode. Your settings were saved for this session.")
+    disks = whole_disks()
+    if not disks:
+        print("\nNo disks available. Your settings were saved for this session.")
         return 0
-    if not selected.startswith("/dev/") or not Path(selected).exists():
+    device = _choose_disk(disks, "Which disk(s) would you like to use? (or '?' for help or 'none')")
+    if not device:
+        print("\n[+] Running diskless. Your settings were saved for this session.")
+        return 0
+
+    print(f"\nThe following disk is selected:")
+    print("  " + " | ".join([device] + _disk_info(device)))
+    print()
+    mode = ""
+    while mode not in ("sys", "data", "none"):
+        mode = ask("How would you like to use it? ('sys', 'data' or '?')", "?").lower()
+        if mode == "?":
+            print(
+                "\n  sys:\n"
+                "    This mode is a traditional disk install. On UEFI a FAT32 ESP and an\n"
+                "    ext4 root partition are created; on BIOS one bootable ext4 partition.\n"
+                "    This mode may be used for development boxes, desktops, virtual servers, etc.\n"
+                "\n"
+                "  data:\n"
+                "    This mode uses your disk for data storage, not for the operating system.\n"
+                "    The system itself will run from tmpfs (RAM).\n"
+                "    Use this mode if you only want the disk for persistent live changes,\n"
+                "    a mailspool, databases, logs, etc.\n")
+            mode = ""
+        elif mode not in ("sys", "data", "none"):
+            print(f"'{mode}' is not a valid mode")
+
+    if mode == "none":
+        print("\n[+] Running diskless. Your settings were saved for this session.")
+        return 0
+
+    if not device.startswith("/dev/") or not Path(device).exists():
         raise SystemExit("Selected device does not exist.")
-    typ = sh(["lsblk", "-dnpo", "TYPE", selected]).stdout.strip()
-    if typ not in ("part", "disk"):
-        raise SystemExit("Selected path is not a disk or partition.")
-    print(f"\nSelected: {selected} ({typ})")
 
-    if mode == "persistence":
-        fstype = sh(["blkid", "-s", "TYPE", "-o", "value", selected]).stdout.strip()
-        if fstype != "ext4":
-            print("1) use an existing ext4 filesystem\n2) erase and create ext4 filesystem")
-            action = ask("Storage action", "1")
-            if action in ("2", "erase", "format"):
-                if not yes(f"PERMANENTLY ERASE ALL DATA on {selected}?"):
-                    raise SystemExit("Formatting cancelled.")
-                subprocess.run(["mkfs.ext4", "-F", "-L", "RibiPersistence", selected], check=True)
-        return prepare_persistence(selected, conf)
+    if mode == "data":
+        return prepare_persistence(device, conf)
 
-    # erase-install
-    if typ != "disk":
+    if sh(["lsblk", "-dn", "-o", "TYPE", device]).stdout.strip() != "disk":
         raise SystemExit("A full install needs a whole disk (not a partition).")
-    return install_to_disk(selected, conf)
+    return install_to_disk(device, conf)
 
 
 def main():
