@@ -359,11 +359,12 @@ def test_dhcpcd_privsep_account_is_provisioned():
 
 
 def test_provisioned_group_gids_do_not_collide():
-    """The builder used to add sudo with gid 27, colliding with video."""
+    """The builder used to add sudo with a gid already owned by video/users."""
     source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    assert '(("audio",29),("video",44),("sudo",1000))' in source, \
-        "audio/video/sudo must use distinct gids (27 is already video)"
-    assert '("sudo",27)' not in source
+    assert "sudo_gid = _next_free_gid(group)" in source, \
+        "sudo's gid must be derived from the groups already present"
+    assert "sudo_gid = _next_free_gid(group)" in source and '"sudo",27' not in source
+    assert '(("audio",29),("video",44),("sudo",sudo_gid))' in source
 
 
 def test_live_init_pivots_root_for_user_namespaces():

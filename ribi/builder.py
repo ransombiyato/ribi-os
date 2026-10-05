@@ -1319,7 +1319,24 @@ exit 127
         if not any(line.startswith("root:") for line in group.splitlines()): group += "root:x:0:\n"
         if not any(line.startswith("ribi:") for line in group.splitlines()): group += "ribi:x:1000:\n"
         if not any(line.startswith("dhcpcd:") for line in group.splitlines()): group += "dhcpcd:x:101:\n"
-        for gname,gid in (("audio",29),("video",44),("sudo",1000)):
+
+        def _gid_in_use(text, gid):
+            for line in text.splitlines():
+                f = line.split(":")
+                if len(f) >= 3 and f[2].isdigit() and int(f[2]) == gid:
+                    return True
+            return False
+
+        def _next_free_gid(text, start=102):
+            gid = start
+            while _gid_in_use(text, gid):
+                gid += 1
+            return gid
+
+        # gid 27 is video, 100 is users, and 1000 is the ribi user's primary
+        # group; derive a free system gid for sudo so no two groups collide.
+        sudo_gid = _next_free_gid(group)
+        for gname,gid in (("audio",29),("video",44),("sudo",sudo_gid)):
             if not any(line.startswith(gname+":") for line in group.splitlines()): group += f"{gname}:x:{gid}:ribi\n"
         # Add ribi to existing supplemental groups without destroying package groups.
         gl=[]
