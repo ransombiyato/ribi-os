@@ -455,17 +455,106 @@ class RibiMasterBuilder:
         zen_opt_dir.parent.mkdir(parents=True, exist_ok=True)
         if zen_src_dir.exists() and not zen_opt_dir.exists():
             shutil.move(str(zen_src_dir), str(zen_opt_dir))
+        # Zen is a glibc-linked Firefox build and this OS is musl/Alpine. The
+        # gcompat shim cannot host Zen's launcher: it deadlocks during glibc
+        # pthread/rtld early init (single-threaded FUTEX_WAIT before relocation
+        # completes), so `zen --version` hangs forever. Ship a self-contained
+        # glibc runtime under /opt/zen/rt and point Zen's interpreter at it so
+        # the whole process tree (including the X11/GDK stack, which inherits
+        # the runtime RPATH) stays glibc and never mixes in musl libraries.
+        zen_rt_lib = zen_opt_dir / "rt/lib"
+        if zen_rt_lib.parent.exists():
+            shutil.rmtree(zen_rt_lib.parent)
+        zen_rt_lib.mkdir(parents=True, exist_ok=True)
+
+        # Resolve the full transitive NEEDED closure of the bundle against the
+        # host's glibc directories with patchelf --print-needed. Using the ELF
+        # metadata directly (rather than ldd) keeps this working on build hosts
+        # whose ldd cannot introspect foreign glibc binaries.
+        loader_dirs = [
+            Path("/lib/x86_64-linux-gnu"), Path("/usr/lib/x86_64-linux-gnu"),
+            Path("/lib64"), Path("/usr/lib64"), Path("/lib"), Path("/usr/lib"),
+        ]
+
+        def needed_of(path: Path) -> List[str]:
+            probe = run_cmd(["patchelf", "--print-needed", str(path)],
+                            capture=True, check=False)
+            return [ln.strip() for ln in (probe.stdout or "").splitlines() if ln.strip()]
+
+        zen_root = zen_opt_dir.resolve()
+        runtime_names: Set[str] = set()
+        seen: Set[str] = set()
+        queue = [e for e in sorted(zen_opt_dir.iterdir())
+                 if e.is_file() and is_elf_x86_64(e)]
+        while queue:
+            current = queue.pop()
+            for soname in needed_of(current):
+                if soname in seen:
+                    continue
+                seen.add(soname)
+                bundled = zen_opt_dir / soname
+                if bundled.exists():
+                    continue
+                source = next((d / soname for d in loader_dirs if (d / soname).exists()), None)
+                if source is None or not source.is_file():
+                    continue
+                if source.resolve().parent == zen_root:
+                    continue
+                runtime_names.add(source.name)
+                if is_elf_x86_64(source):
+                    queue.append(source)
+
+        # The dynamic loader is not itself a NEEDED entry.
+        host_loader = next(
+            (p for p in (
+                Path("/lib64/ld-linux-x86-64.so.2"),
+                Path("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"),
+                Path("/usr/lib64/ld-linux-x86-64.so.2"),
+            ) if p.exists()),
+            None,
+        )
+        if host_loader is None:
+            raise RuntimeError("Validation Failed: host glibc loader not found for Zen runtime bundle")
+        host_loader = host_loader.resolve()
+
+        # glibc dlopens NSS service modules by name, so they are invisible to
+        # DT_NEEDED. Browsing needs DNS and profile lookup needs passwd/group.
+        for nss in ("libnss_dns.so.2", "libnss_files.so.2", "libnss_compat.so.2",
+                    "libnss_hesiod.so.2"):
+            source = next((d / nss for d in loader_dirs if (d / nss).is_file()), None)
+            if source is not None:
+                runtime_names.add(nss)
+
+        for name in sorted(runtime_names):
+            source = next((d / name for d in loader_dirs if (d / name).is_file()), None)
+            if source is not None:
+                shutil.copy2(source, zen_rt_lib / name)
+        shutil.copy2(host_loader, zen_rt_lib / host_loader.name)
+
+        staged_zen_rt = DIR_CACHE / "zen-rt"
+        shutil.copy2(zen_opt_dir / "zen", staged_zen_rt)
+        run_cmd([
+            "patchelf",
+            "--force-rpath",
+            "--set-interpreter", f"/opt/zen/rt/lib/{host_loader.name}",
+            "--set-rpath", "/opt/zen/rt/lib:/opt/zen",
+            str(staged_zen_rt),
+        ])
+        shutil.copy2(staged_zen_rt, zen_opt_dir / "zen-rt")
+        (zen_opt_dir / "zen-rt").chmod(0o755)
+
         zen_launcher = """#!/bin/sh
 set -eu
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
-exec /opt/zen/zen "$@"
+exec /opt/zen/zen-rt "$@"
 """
         write_file(DIR_ROOTFS / "usr/local/bin/zen-browser", zen_launcher, mode=0o755)
         
-        # Zen's Firefox components declare libdl.so.2 while modern glibc
-        # folds libdl into libc. gcompat provides the ABI entry point, and these
-        # copies make the merged-library names resolvable inside the hermetic rootfs.
+        # Other gcompat-hosted glibc binaries declare libdl.so.2 while modern
+        # glibc folds libdl into libc. gcompat provides the ABI entry point, and
+        # these copies make the merged-library names resolvable in the rootfs.
+        # (Zen itself no longer depends on this: it runs on /opt/zen/rt.)
         libc_compat = DIR_ROOTFS / "lib/libc.so.6"
         if libc_compat.exists():
             for merged_name in ("libdl.so.2", "libm.so.6", "libpthread.so.0", "librt.so.1"):
@@ -1834,7 +1923,7 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
             if leaked:
                 raise RuntimeError(f"Validation Failed: no-desktop release contains GUI artifacts: {leaked}")
         else:
-            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "usr/bin/zathura", "usr/bin/audacity", "usr/bin/obs", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
+            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "usr/bin/zathura", "usr/bin/audacity", "usr/bin/obs", "opt/zen/zen", "opt/zen/zen-rt", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
                 if not (DIR_ROOTFS / rel).exists():
                     raise RuntimeError(f"Validation Failed: Ribi desktop payload missing: /{rel}")
             for rel in ("usr/share/glib-2.0/schemas/gschemas.compiled", "usr/share/mime/mime.cache"):

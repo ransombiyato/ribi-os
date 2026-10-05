@@ -97,6 +97,10 @@ REQUIRED_HOST_COMMANDS = [
     "llvm-nm",
     "strings",
     "convert",
+    # Zen ships as a glibc Firefox build; the builder bundles a self-contained
+    # glibc runtime next to it. patchelf both computes the closure and rewrites
+    # the launcher's interpreter and RPATH to that runtime.
+    "patchelf",
 ]
 
 # Checked separately (advisory only, not a hard preflight requirement): these are

@@ -47,6 +47,7 @@ jobs:
             xorriso squashfs-tools mtools rsync cpio xz-utils \
             grub-pc-bin grub-efi-amd64-bin grub-common \
             dosfstools e2fsprogs util-linux imagemagick \
+            patch elf patchelf \
             qemu-system-x86 ovmf
 
       - name: Verify host dependencies

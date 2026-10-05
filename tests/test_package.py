@@ -286,3 +286,29 @@ def test_builder_loads_components_from_components_dir():
     assert 'Path(__file__).with_name("ribi-dock.py")' not in source, (
         "components must be loaded via _component(), not relative to builder.py"
     )
+
+
+def test_zen_runs_on_bundled_glibc_runtime():
+    """Zen is glibc and the OS is musl; gcompat deadlocks its launcher.
+
+    The builder must ship a self-contained glibc runtime beside Zen and point
+    the launcher's interpreter/RPATH at it, so the whole process tree stays
+    glibc instead of deadlocking in the gcompat pthread/rtld early init.
+    """
+    from ribi import config
+
+    assert "patchelf" in config.REQUIRED_HOST_COMMANDS, \
+        "patchelf must be a required host tool for the Zen runtime bundle"
+
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    # The closure is resolved from ELF NEEDED entries, not from ldd.
+    assert "patchelf" in source and "--print-needed" in source
+    assert "--set-interpreter" in source and "--set-rpath" in source
+    assert "/opt/zen/rt/lib" in source, "the bundled glibc runtime path must be stable"
+    assert "zen-rt" in source, "the launcher must exec the reinterpreted Zen binary"
+    # The launcher must not fall back to the bare gcompat launcher.
+    launcher = source.split("#!/bin/sh", 1)[1].split('"""', 1)[0]
+    assert "exec /opt/zen/zen-rt" in launcher, "zen-browser must start /opt/zen/zen-rt"
+    assert "exec /opt/zen/zen " not in launcher
+    # zen-rt must be part of the desktop payload validation.
+    assert "opt/zen/zen-rt" in source
