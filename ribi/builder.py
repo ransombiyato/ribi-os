@@ -547,7 +547,12 @@ class RibiMasterBuilder:
 set -eu
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
-exec /opt/zen/zen-rt "$@"
+# The bespoke kernel does not grant unprivileged user namespaces, so Zen's
+# content sandbox cannot initialise and it prints
+# "CanCreateUserNamespace() clone() failure: EPERM". Disable the sandbox here
+# so the dock, launcher, and desktop entry all match the autostart entries
+# (which already pass --no-sandbox) instead of warning on every launch.
+exec /opt/zen/zen-rt --no-sandbox --disable-dev-shm-usage "$@"
 """
         write_file(DIR_ROOTFS / "usr/local/bin/zen-browser", zen_launcher, mode=0o755)
         
@@ -1306,9 +1311,15 @@ exit 127
             passwd += "ribi:x:1000:1000:Ribi User:/home/ribi:/bin/sh\n"
         if not any(line.startswith("messagebus:") for line in passwd.splitlines()):
             passwd += "messagebus:x:81:81:DBus Message Bus:/run/dbus:/sbin/nologin\n"
+        # dhcpcd is built with --enable-privsep; without its separation account it
+        # refuses to drop privileges and logs "no such user dhcpcd". Alpine's
+        # dhcpcd.pre-install creates this account and its home is group-writable.
+        if not any(line.startswith("dhcpcd:") for line in passwd.splitlines()):
+            passwd += "dhcpcd:x:100:101:dhcpcd:/var/lib/dhcpcd:/sbin/nologin\n"
         if not any(line.startswith("root:") for line in group.splitlines()): group += "root:x:0:\n"
         if not any(line.startswith("ribi:") for line in group.splitlines()): group += "ribi:x:1000:\n"
-        for gname,gid in (("audio",29),("video",44),("sudo",27)):
+        if not any(line.startswith("dhcpcd:") for line in group.splitlines()): group += "dhcpcd:x:101:\n"
+        for gname,gid in (("audio",29),("video",44),("sudo",1000)):
             if not any(line.startswith(gname+":") for line in group.splitlines()): group += f"{gname}:x:{gid}:ribi\n"
         # Add ribi to existing supplemental groups without destroying package groups.
         gl=[]
@@ -1319,6 +1330,10 @@ exit 127
                 f[3]=(f[3]+",ribi").lstrip(","); line=":".join(f)
             gl.append(line)
         group="\n".join(gl)+"\n"
+        dhcpcd_dir=DIR_ROOTFS / "var/lib/dhcpcd"
+        if dhcpcd_dir.is_dir():
+            try: os.chown(dhcpcd_dir, 100, 101)
+            except OSError: pass
         if not any(line.startswith("root:") for line in shadow.splitlines()): shadow += "root:!:1:0:99999:7:::\n"
         if not any(line.startswith("ribi:") for line in shadow.splitlines()): shadow += "ribi:!:1:0:99999:7:::\n"
         write_file(passwd_p, passwd)
@@ -1525,7 +1540,8 @@ ChannelSetup=Stereo
         # previous applet list omitted both, so /init would silently fail every
         # `find`/`depmod` invocation with "not found" the instant it tried them.
         applets = ["sh", "mount", "umount", "mkdir", "cat", "mknod", "sleep", "ls", "echo",
-                   "grep", "head", "modprobe", "insmod", "find", "depmod", "chroot", "tr"]
+                   "grep", "head", "modprobe", "insmod", "find", "depmod", "chroot", "tr",
+                   "pivot_root"]
         # Never execute the x86_64 target BusyBox on the build host: the builder
         # is intentionally designed to run on ARM64/Termux, where that would fail
         # with Exec format error.  Inspect the ELF's printable strings instead.
@@ -1547,6 +1563,8 @@ ChannelSetup=Stereo
             raise RuntimeError(f"Unable to inspect target BusyBox applet table without executing x86_64 code: {exc}") from exc
         if not re.search(r"(?:^|\n)switch_root(?:\n|$)", available_text):
             raise RuntimeError("Initramfs BusyBox does not advertise the required switch_root applet")
+        if not re.search(r"(?:^|\n)pivot_root(?:\n|$)", available_text):
+            raise RuntimeError("Initramfs BusyBox does not advertise the required pivot_root applet")
         for a in applets:
             (DIR_INITRAMFS / "bin" / a).symlink_to("/bin/busybox")
 

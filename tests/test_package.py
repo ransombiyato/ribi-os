@@ -339,3 +339,58 @@ def test_zen_runs_on_bundled_glibc_runtime():
     assert "exec /opt/zen/zen " not in launcher
     # zen-rt must be part of the desktop payload validation.
     assert "opt/zen/zen-rt" in source
+
+
+def test_installer_decompresses_keymap_before_loadkmap():
+    """loadkmap wants a raw table; the live apply must not pipe a gzipped map."""
+    installer = (REPO / "ribi" / "sources" / "ribi-installer.py").read_text(encoding="utf-8")
+    assert "import gzip" in installer, "installer must import gzip for keymap handling"
+    assert "gzip.decompress" in installer, \
+        "apply_live_session must decompress .map.gz before calling loadkmap"
+
+
+def test_dhcpcd_privsep_account_is_provisioned():
+    """dhcpcd is built with privsep; without its user it logs 'no such user'."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert "dhcpcd:x:100:101:" in source, "the dhcpcd privsep user must be added"
+    assert "dhcpcd:x:101:" in source, "the dhcpcd privsep group must be added"
+    assert 'var/lib/dhcpcd' in source and "os.chown" in source, \
+        "the dhcpcd state directory must be owned by its privsep user"
+
+
+def test_provisioned_group_gids_do_not_collide():
+    """The builder used to add sudo with gid 27, colliding with video."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert '(("audio",29),("video",44),("sudo",1000))' in source, \
+        "audio/video/sudo must use distinct gids (27 is already video)"
+    assert '("sudo",27)' not in source
+
+
+def test_live_init_pivots_root_for_user_namespaces():
+    """chroot leaves / above the mount root and disables user namespaces."""
+    live = (REPO / "ribi" / "sources" / "live-init.sh").read_text(encoding="utf-8")
+    assert "ribi_pivot_handoff" in live, "the handoff must be centralised"
+    assert "pivot_root . .ribi-oldroot" in live, \
+        "the initramfs must pivot_root before exec'ing the target init"
+    assert "exec chroot /sysroot /sbin/ribi-init" not in live, \
+        "a plain chroot handoff disables user namespaces (breaks Zen sandbox)"
+    assert "exec chroot /sysroot" in live, "a chroot fallback must remain"
+
+
+def test_initramfs_provisions_pivot_root_applet():
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert '"pivot_root"]' in source, "the initramfs applet list must include pivot_root"
+    assert "does not advertise the required pivot_root applet" in source, \
+        "the builder must guard the pivot_root applet like switch_root"
+
+
+def test_zen_launcher_disables_sandbox():
+    """Without user namespaces Zen's sandbox EPERMs; the shared launcher must opt out."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    launcher = source.split("#!/bin/sh", 1)[1].split('"""', 1)[0]
+    assert "--no-sandbox" in launcher, \
+        "zen-browser must pass --no-sandbox because the kernel lacks user namespaces"
+    assert "exec /opt/zen/zen-rt" in launcher
+
+
+

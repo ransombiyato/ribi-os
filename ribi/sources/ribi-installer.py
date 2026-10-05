@@ -14,6 +14,7 @@ unmounted, the running root is protected, and a destructive action requires an
 explicit yes (y/n).
 """
 
+import gzip
 import json
 import os
 import re
@@ -674,9 +675,13 @@ def apply_live_session(conf):
     keymap = Path("/usr/share/keymaps") / conf["keymap"]
     if not keymap.exists():
         keymap = Path("/usr/share/keymaps/xkb") / f"{conf['keymap']}.map.gz"
+    # kbd keymaps are gzipped; loadkmap needs the raw table, so decompress first.
     if keymap.exists() and shutil.which("loadkmap"):
-        with open(keymap, "rb") as handle:
-            subprocess.run(["loadkmap"], stdin=handle, check=False)
+        try:
+            raw = gzip.decompress(keymap.read_bytes()) if keymap.suffix == ".gz" else keymap.read_bytes()
+            subprocess.run(["loadkmap"], input=raw, check=False)
+        except OSError:
+            pass
     _apply_xkb_layout("/etc/X11/xorg.conf", conf["xkb_layout"])
 
 
