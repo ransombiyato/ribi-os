@@ -65,6 +65,7 @@ def cic_host_dependencies(cross_required: bool = False):
             "openssl": "openssl",
             "mkfs.vfat": "dosfstools", "mmd": "mtools", "mdir": "mtools", "mcopy": "mtools",
             "partprobe": "parted", "depmod": "kmod", "strings": "binutils", "grub-install": "grub",
+            "patchelf": "patchelf",
         }
 
         pkgs = []
@@ -172,6 +173,7 @@ def cic_host_dependencies(cross_required: bool = False):
                 "mcopy": "mtools", "mdir": "mtools", "mmd": "mtools",
                 "depmod": "kmod", "openssl": "openssl", "mkfs.vfat": "dosfstools",
                 "partprobe": "parted", "convert": "imagemagick", "clang": "clang", "ld.lld": "lld", "llvm-ar": "llvm", "llvm-nm": "llvm", "strings": "binutils", "grub-install": "grub2-common",
+                "patchelf": "patchelf",
                  "grub-mkimage": "grub-common",
                 "grub-mkrescue": "grub-common", "grub-mkstandalone": "grub-common",
             }
@@ -196,7 +198,8 @@ def cic_host_dependencies(cross_required: bool = False):
                 "xorriso": "xorriso", "rsync": "rsync", "tar": "tar",
                 "xz": "xz", "curl": "curl", "cpio": "cpio",
                 "x86_64-linux-gnu-gcc": "gcc-x86_64-linux-gnu",
-                "gcc": "gcc", "mformat": "mtools", "mcopy": "mtools", "strings": "binutils", "grub-install": "grub2-tools"
+                "gcc": "gcc", "mformat": "mtools", "mcopy": "mtools", "strings": "binutils", "grub-install": "grub2-tools",
+                "patchelf": "patchelf"
             }
             pkgs = list(set(pkg_map.get(m, m) for m in missing_cmds))
             pkgs.extend([
@@ -216,7 +219,8 @@ def cic_host_dependencies(cross_required: bool = False):
                 "xorriso": "xorriso", "rsync": "rsync", "tar": "tar",
                 "xz": "xz", "curl": "curl", "cpio": "cpio",
                 "x86_64-linux-gnu-gcc": "x86_64-linux-gnu-gcc",
-                "gcc": "gcc", "mformat": "mtools", "mcopy": "mtools", "strings": "binutils", "grub-install": "grub2-tools"
+                "gcc": "gcc", "mformat": "mtools", "mcopy": "mtools", "strings": "binutils", "grub-install": "grub2-tools",
+                "patchelf": "patchelf"
             }
             pkgs = list(set(pkg_map.get(m, m) for m in missing_cmds))
             pkgs.extend([
@@ -233,7 +237,8 @@ def cic_host_dependencies(cross_required: bool = False):
                 "make": "make", "mksquashfs": "squashfs-tools",
                 "xorriso": "xorriso", "rsync": "rsync", "tar": "tar",
                 "xz": "xz", "curl": "curl", "cpio": "cpio",
-                "mformat": "mtools", "mcopy": "mtools", "gcc": "gcc", "strings": "binutils", "grub-install": "grub"
+                "mformat": "mtools", "mcopy": "mtools", "gcc": "gcc", "strings": "binutils", "grub-install": "grub",
+                "patchelf": "patchelf"
             }
             pkgs = list(set(pkg_map.get(m, m) for m in missing_cmds))
             pkgs.extend([

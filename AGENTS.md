@@ -24,8 +24,10 @@ bootstrap plus a bespoke-compiled Linux kernel and ribi's own userspace.
   `_payload()` in `builder.py`.
 - `ribi/kernel_config.py` — the kernel `.config` used for the build.
 - `ribi/assets/wallpaper.png` — bundled desktop wallpaper.
-- `legacy/ribi-iso-builder.monolith.py` — the original single-file builder,
-  kept as the reference for the split. Tests compare against it.
+- **`legacy/ribi-iso-builder.monolith.py`** — the original single-file builder.
+  It was kept as the reference for the split, and has now been deleted because
+  the modular package fully replaces it and the file only invited edits to the
+  wrong copy. Tests no longer compare against it; they pin behaviour instead.
 
 ## Commands
 
@@ -45,10 +47,10 @@ on every push and attempts a full ISO build on `main`.
 
 ## Invariants to preserve
 
-- The split is behavioural: `legacy/` must stay, and
-  `tests/test_package.py` must keep passing (it pins that every original
-  top-level definition survived and that `sources/` + `payloads/` match the
-  original embedded strings byte-for-byte).
+- The split is behavioural: `tests/test_package.py` must keep passing. It no
+  longer compares against the removed monolith; it pins that the package and
+  every source/component/payload compiles, that the app catalogs match the
+  package set, and that the compositor never paints a window below full opacity.
 - `builder.py` cross-module imports are explicit; when adding a name used
   across modules, add the import rather than relying on a wildcard.
 - Keep the workspace path check in `clean_workspace()` — it refuses to delete
@@ -81,10 +83,10 @@ Gotchas learned the hard way:
   returns a placeholder (the dock came up 10x10 and invisible). Use
   `set_size_request` for the width and a `size-allocate` handler for the real
   height before `move()`.
-- **Never edit `ribi/sources/` or `ribi/payloads/` casually.** They are pinned
-  byte-for-byte to `legacy/ribi-iso-builder.monolith.py` by
-  `tests/test_package.py`; changing them requires updating the legacy reference
-  too. Prefer adding new files over editing the pinned ones.
+- **Never edit `ribi/sources/` or `ribi/payloads/` casually.** They are written
+  verbatim into the image, so a change there is a change to the OS. They are no
+  longer pinned byte-for-byte to a legacy reference (that file was deleted), so
+  edit them directly and add or update a test that pins the new behaviour.
 - **The sysroot cache is keyed by a package-list hash.** `stage_3_*` stores a
   `.sysroot_packages` signature next to `.sysroot_ready`; adding a package to
   `config.py` invalidates and rebuilds the sysroot automatically.
@@ -130,4 +132,81 @@ Gotchas learned the hard way:
   the image file format" — even a valid PNG. Mount `/proc` before testing; glycin
   then falls back to "running without sandbox" and decoding works. This is a
   test-harness artifact, not an image bug.
+- **The compositor can make windows invisible.** `ribi-picom.conf` must keep
+  `inactive-opacity = 1.0`, `active-opacity = 1.0`, `unredir-if-possible =
+  false`, and `fading = false`. With a sub-1.0 inactive opacity, or with
+  unredirecting enabled, unfocused windows stopped being painted and only
+  reappeared for a moment when clicked. `detect-rounded-corners` and a non-zero
+  `corner-radius` are also avoided on the software xrender path. Keep the config
+  conservative; cosmetics are not worth a disappearing window.
+- **OBS 32's hybrid MP4 muxer segfaults on this image.** Recording with the
+  default fragmented "hybrid" MP4/MOV output crashes right after
+  `Writing Hybrid MP4/MOV file`. The shipped OBS profile sets `RecFormat2=mkv`
+  (the mature, crash-safe muxer). The "Video Capture Device (V4L2)" source also
+  needs `libv4l2`, which only `v4l-utils` provides; OBS depends on the soname
+  `libv4l2.so.0`, which the resolver cannot map back to a package, so
+  `v4l-utils` must stay in `TARGET_APK_PACKAGES_APPS`.
+- **OBS reads the recording container from `[SimpleOutput]`, not `[Output]`.**
+  A `RecFormat2=mkv` key under `[Output]` is silently ignored and OBS records
+  hybrid MP4. The profile's `[General] Name` must match the profile directory
+  name (`ribi`), and OBS selects the profile/scene collection from `user.ini`
+  (`[Basic]`), *not* `global.ini`. The reliable fix is to name both on the
+  command line: every launch path runs
+  `obs --disable-shutdown-check --profile ribi --collection ribi`. A shipped
+  scene collection (`ribi/payloads/obs-scene-collection.json`, `name=ribi`) is
+  written to `basic/scenes/ribi.json` so the first launch is not "Untitled".
+- **OBS's `FirstRun` must stay `false`.** With `FirstRun=true` OBS launches its
+  auto-configuration wizard on first start, which re-detects the encoder and
+  container and discards the shipped `RecFormat2=mkv` fix.
+- **Zen Browser cannot run on musl + gcompat.** The official Zen tarball is a
+  glibc Firefox build. `libc.so.6` is a symlink to `libgcompat.so.0`, and
+  gcompat is missing several glibc-fortify symbols Zen's binary imports
+  (`__vfprintf_chk`, `__strcat_chk`, `__vsnprintf_chk`, `__longjmp_chk`,
+  `__memcpy_chk`, `isinf`, `isnan`). A musl shim exporting those forwards them
+  to musl and clears `ldd`'s relocation errors, but Zen then deadlocks in early
+  init on a `FUTEX_WAIT_PRIVATE` and never spawns a child. gcompat cannot
+  provide Firefox's threading, so the bundled browser does not start; replace
+  it with a musl-native browser or a real glibc rootfs before relying on it.
+- **A chroot of the built rootfs can run the real guest apps for testing.**
+  `sudo chroot ribi-build-workspace/rootfs <binary>` with `DISPLAY` pointed at a
+  host Xvfb exercises the actual image binaries (GTK, X11, OBS, …). Bind `/proc`,
+  `/dev`, `/dev/pts`, `/tmp/.X11-unix`, and mount a `tmpfs` on `/dev/shm` or
+  Chromium/Firefox hang. Use `HOME=/home/ribi` so apps pick up the shipped
+  config. Apps run as `root` here while the image runs them as `ribi`, so treat
+  a chroot run as a smoke test, not a full desktop session.
+- **The doctor's app smoke test must tolerate warnings.** Every GTK app on this
+  image logs benign warnings (missing AT-SPI bus, DRI3 unavailable, an optional
+  icon), so `ERROR_MARKERS` in `ribi-doctor.py` lists only hard failures — a
+  bare `"error"` marker fails every app. `subprocess.TimeoutExpired` can return
+  `str`, `bytes`, or `None` for `stdout`/`stderr`; normalise each stream before
+  joining or the doctor crashes with `TypeError`. A GUI app still alive after
+  the timeout is healthy, not a failure. The doctor's OBS probe also needs
+  `--profile ribi --collection ribi`.
+- **Setup and the installer are one program.** `ribi-setup.py` was merged into
+  `ribi-installer.py`; the single `ribi-installer` runs the whole wizard
+  (identity, networking, then erase-install / persistence / ram-only). Do not
+  add a second setup entry point.
+- **The dock's window list must not block the GTK loop.** `ribi-dock.py` polls
+  the EWMH window list with `xdotool`/`xprop` on a worker thread and applies the
+  result on an idle callback. Never call those tools synchronously from the main
+  loop: the panel freezes while an app is busy starting.
+- **`xprop` prints string properties with surrounding quotes.** A taskbar built
+  straight from `xprop -id <id> _NET_WM_NAME` shows `"Title"` with literal quote
+  characters. `_xprop` in `ribi-dock.py` strips a leading/trailing `"`; keep that
+  when reading any string property (`WM_NAME`, `_NET_WM_NAME`).
+- **Maximise must go through the window manager.** Resizing a window to
+  `100% 100%` at `0,0` leaves Openbox's frame hanging off-screen. Use the EWMH
+  state (`xdotool windowstate --add MAXIMIZED_VERT MAXIMIZED_HORZ`) so the WM
+  accounts for decorations.
+- **Verify compositor changes with the real config, not by eye.** The opacity
+  regression is easy to reproduce headlessly: run Xvfb + openbox + the shipped
+  `ribi-picom.conf` + picom, open two white windows, focus one, and compare the
+  mean brightness of each window from a root screendump. Fixed config gives a
+  ratio of ~1.0 (both ~0.93); the old options (`unredir-if-possible = true`,
+  `inactive-opacity = 0.97`) render both windows at ~0.026 (black).
+- **`ribi.serial=1` replaces the GUI, it does not accompany it.** `/sbin/ribi-init`
+  uses `if ribi.serial=1 … elif … GUI`, so a serial-console boot gives a root
+  shell on `ttyS0` and never starts Xorg. To inspect the desktop, boot normally
+  and use the QEMU monitor `screendump`, or start Xorg by hand in the serial
+  shell.
 

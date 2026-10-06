@@ -51,6 +51,17 @@ fi
 if [ -f /etc/hostname ]; then hostname "$(cat /etc/hostname | tr -d '\r\n')" || true; fi
 ip link set lo up 2>/dev/null || true
 
+# Apply the keyboard layout chosen during setup. The kbd keymaps are gzipped and
+# loadkmap wants the raw table, so decompress to a temp file first.
+if [ -x /sbin/loadkmap ] && [ -f /etc/conf.d/keymaps ]; then
+    _ribi_keymap=$(sed -n 's/^keymap="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' /etc/conf.d/keymaps | head -1)
+    if [ -n "$_ribi_keymap" ] && [ -f "/usr/share/keymaps/xkb/$_ribi_keymap.map.gz" ]; then
+        if gzip -dc "/usr/share/keymaps/xkb/$_ribi_keymap.map.gz" > /tmp/ribi-console.keymap 2>/dev/null; then
+            /sbin/loadkmap < /tmp/ribi-console.keymap >/dev/null 2>&1 || true
+        fi
+    fi
+fi
+
 # Installed images are cloned from the same live root; never keep the generic
 # build-time D-Bus ID. Create one on first boot and preserve it thereafter.
 _ribi_machine_id=$(cat /etc/machine-id 2>/dev/null | tr -d '[:space:]' | tr 'A-F' 'a-f')

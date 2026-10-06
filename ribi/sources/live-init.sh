@@ -94,6 +94,24 @@ mount_with_timeout() {
     wait "$_mt_pid"
 }
 
+# Hand the initramfs over to /sysroot with pivot_root, then exec the target init.
+# A plain `chroot` leaves the initramfs as the realmount root, which disables
+# user namespaces (unshare(CLONE_NEWUSER) returns EPERM); that breaks sandboxed
+# browsers such as Zen. pivot_root moves the target mount to / so user
+# namespaces work. The caller must have /dev, /proc and /sys already bound into
+# /sysroot. Fall back to chroot if pivot_root is unavailable.
+ribi_pivot_handoff() {
+    _init="$1"
+    if command -v pivot_root >/dev/null 2>&1; then
+        mkdir -p /sysroot/.ribi-oldroot
+        if cd /sysroot && pivot_root . .ribi-oldroot; then
+            exec chroot . "$_init"
+        fi
+        cd /
+    fi
+    exec chroot /sysroot "$_init"
+}
+
 # Installed entries mount their UUID directly; only live entries scan for squashfs.
 if grep -qw 'ribi.installed=1' /proc/cmdline 2>/dev/null; then
     ROOT_UUID=''
@@ -136,7 +154,7 @@ if grep -qw 'ribi.installed=1' /proc/cmdline 2>/dev/null; then
     if ! mount_with_timeout 10 mount --bind /proc /sysroot/proc; then exec /bin/sh; fi
     if ! mount_with_timeout 10 mount --rbind /sys /sysroot/sys; then exec /bin/sh; fi
     echo "[RIBI-INITRAMFS] installed-root handoff" >/dev/ttyS0 2>/dev/null || true
-    exec chroot /sysroot /sbin/ribi-init
+    ribi_pivot_handoff /sbin/ribi-init
 fi
 
 draw_loader "Preparing live system" 1
@@ -329,4 +347,4 @@ fi
 ' "$_rc" >/dev/tty0 2>/dev/null || true
     printf '[RIBI-INITRAMFS] chroot handoff
 ' >/dev/ttyS0 2>/dev/null || true
-    exec chroot /sysroot /sbin/ribi-init
+    ribi_pivot_handoff /sbin/ribi-init

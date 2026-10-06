@@ -47,6 +47,14 @@ def start_compositor(env: dict) -> subprocess.Popen | None:
     if os.environ.get("RIBI_NO_COMPOSITOR") == "1":
         return None
     config = "/etc/xdg/ribi/picom.conf"
+    # Capture the compositor's own diagnostics instead of discarding them: a
+    # rejected option (picom exits at startup) is the difference between "no
+    # compositor" and "windows stop being painted", and the log is the only way
+    # to tell those apart after the fact.
+    try:
+        compositor_log = open("/tmp/ribi-compositor.log", "ab")
+    except OSError:
+        compositor_log = subprocess.DEVNULL
     for name, args in (
         ("picom", ["picom", "--config", config]),
         ("compton", ["compton", "--config", config]),
@@ -54,7 +62,7 @@ def start_compositor(env: dict) -> subprocess.Popen | None:
         if shutil.which(name):
             try:
                 proc = subprocess.Popen(
-                    args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    args, env=env, stdout=compositor_log, stderr=compositor_log,
                     start_new_session=True,
                 )
                 log(f"compositor started: {name} pid={proc.pid}")

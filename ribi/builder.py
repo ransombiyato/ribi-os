@@ -5,6 +5,7 @@ original monolithic builder for readability; behaviour is unchanged.
 """
 
 import base64
+import concurrent.futures
 import hashlib
 import io
 import json
@@ -26,7 +27,7 @@ from .deps import cic_host_dependencies
 from .download import download_file, download_with_sidecar_hash
 from .kernel_config import get_bespoke_kernel_config
 from .logging_utils import BuildLogger, run_cmd, sha256_file, write_file
-from .sources import SRC_LIVE_INIT, SRC_RIBI_2048, SRC_RIBI_CLI, SRC_RIBI_INIT, SRC_RIBI_INSTALLER, SRC_RIBI_PKG, SRC_RIBI_SETUP, SRC_RIBI_SNAKE, SRC_RIBI_SVC
+from .sources import SRC_LIVE_INIT, SRC_RIBI_2048, SRC_RIBI_CLI, SRC_RIBI_DOCTOR, SRC_RIBI_INIT, SRC_RIBI_INSTALLER, SRC_RIBI_PKG, SRC_RIBI_SNAKE, SRC_RIBI_SVC
 
 _PAYLOADS_DIR = Path(__file__).resolve().parent / "payloads"
 _COMPONENTS_DIR = Path(__file__).resolve().parent / "components"
@@ -194,7 +195,11 @@ class RibiMasterBuilder:
         BuildLogger.info(f"Resolved {len(install_set)} total x86_64 packages (console core + networking + audio + deps).")
 
         # 4. Download and unpack every resolved package into the hermetic sysroot.
-        for pkg in install_set:
+        #    Extraction is I/O- and CPU-bound and each package writes to a
+        #    disjoint set of paths, so unpack them in a small thread pool. The
+        #    whole closure is ~200 packages; doing it serially dominated the
+        #    stage. Any failure still surfaces with the offending package name.
+        def _fetch_one(pkg: str) -> str:
             version = pkg_versions[pkg]
             apk_name = f"{pkg}-{version}.apk"
             repo_sub = pkg_repo.get(pkg, "main")
@@ -207,6 +212,12 @@ class RibiMasterBuilder:
                 safe_tar_extract(apk_dest, DIR_X86_SYSROOT)
             except Exception as e:
                 raise RuntimeError(f"Failed to fetch, verify, or extract required package '{pkg}': {e}") from e
+            return pkg
+
+        workers = min(8, max(4, (os.cpu_count() or 4) * 2))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            for _ in pool.map(_fetch_one, install_set):
+                pass
 
         # Final structural gate: do not mark a partially staged sysroot as ready.
         required_standalone = ["busybox", "python3", "blkid", "lsblk", "parted", "mkfs.ext4", "mkfs.vfat", "rsync", "acpid"]
@@ -444,17 +455,111 @@ class RibiMasterBuilder:
         zen_opt_dir.parent.mkdir(parents=True, exist_ok=True)
         if zen_src_dir.exists() and not zen_opt_dir.exists():
             shutil.move(str(zen_src_dir), str(zen_opt_dir))
+        # Zen is a glibc-linked Firefox build and this OS is musl/Alpine. The
+        # gcompat shim cannot host Zen's launcher: it deadlocks during glibc
+        # pthread/rtld early init (single-threaded FUTEX_WAIT before relocation
+        # completes), so `zen --version` hangs forever. Ship a self-contained
+        # glibc runtime under /opt/zen/rt and point Zen's interpreter at it so
+        # the whole process tree (including the X11/GDK stack, which inherits
+        # the runtime RPATH) stays glibc and never mixes in musl libraries.
+        zen_rt_lib = zen_opt_dir / "rt/lib"
+        if zen_rt_lib.parent.exists():
+            shutil.rmtree(zen_rt_lib.parent)
+        zen_rt_lib.mkdir(parents=True, exist_ok=True)
+
+        # Resolve the full transitive NEEDED closure of the bundle against the
+        # host's glibc directories with patchelf --print-needed. Using the ELF
+        # metadata directly (rather than ldd) keeps this working on build hosts
+        # whose ldd cannot introspect foreign glibc binaries.
+        loader_dirs = [
+            Path("/lib/x86_64-linux-gnu"), Path("/usr/lib/x86_64-linux-gnu"),
+            Path("/lib64"), Path("/usr/lib64"), Path("/lib"), Path("/usr/lib"),
+        ]
+
+        def needed_of(path: Path) -> List[str]:
+            probe = run_cmd(["patchelf", "--print-needed", str(path)],
+                            capture=True, check=False)
+            return [ln.strip() for ln in (probe.stdout or "").splitlines() if ln.strip()]
+
+        zen_root = zen_opt_dir.resolve()
+        runtime_names: Set[str] = set()
+        seen: Set[str] = set()
+        queue = [e for e in sorted(zen_opt_dir.iterdir())
+                 if e.is_file() and is_elf_x86_64(e)]
+        while queue:
+            current = queue.pop()
+            for soname in needed_of(current):
+                if soname in seen:
+                    continue
+                seen.add(soname)
+                bundled = zen_opt_dir / soname
+                if bundled.exists():
+                    continue
+                source = next((d / soname for d in loader_dirs if (d / soname).exists()), None)
+                if source is None or not source.is_file():
+                    continue
+                if source.resolve().parent == zen_root:
+                    continue
+                runtime_names.add(source.name)
+                if is_elf_x86_64(source):
+                    queue.append(source)
+
+        # The dynamic loader is not itself a NEEDED entry.
+        host_loader = next(
+            (p for p in (
+                Path("/lib64/ld-linux-x86-64.so.2"),
+                Path("/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"),
+                Path("/usr/lib64/ld-linux-x86-64.so.2"),
+            ) if p.exists()),
+            None,
+        )
+        if host_loader is None:
+            raise RuntimeError("Validation Failed: host glibc loader not found for Zen runtime bundle")
+        host_loader = host_loader.resolve()
+
+        # glibc dlopens NSS service modules by name, so they are invisible to
+        # DT_NEEDED. Browsing needs DNS and profile lookup needs passwd/group.
+        for nss in ("libnss_dns.so.2", "libnss_files.so.2", "libnss_compat.so.2",
+                    "libnss_hesiod.so.2"):
+            source = next((d / nss for d in loader_dirs if (d / nss).is_file()), None)
+            if source is not None:
+                runtime_names.add(nss)
+
+        for name in sorted(runtime_names):
+            source = next((d / name for d in loader_dirs if (d / name).is_file()), None)
+            if source is not None:
+                shutil.copy2(source, zen_rt_lib / name)
+        shutil.copy2(host_loader, zen_rt_lib / host_loader.name)
+
+        staged_zen_rt = DIR_CACHE / "zen-rt"
+        shutil.copy2(zen_opt_dir / "zen", staged_zen_rt)
+        run_cmd([
+            "patchelf",
+            "--force-rpath",
+            "--set-interpreter", f"/opt/zen/rt/lib/{host_loader.name}",
+            "--set-rpath", "/opt/zen/rt/lib:/opt/zen",
+            str(staged_zen_rt),
+        ])
+        shutil.copy2(staged_zen_rt, zen_opt_dir / "zen-rt")
+        (zen_opt_dir / "zen-rt").chmod(0o755)
+
         zen_launcher = """#!/bin/sh
 set -eu
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
-exec /opt/zen/zen "$@"
+# The bespoke kernel does not grant unprivileged user namespaces, so Zen's
+# content sandbox cannot initialise and it prints
+# "CanCreateUserNamespace() clone() failure: EPERM". Disable the sandbox here
+# so the dock, launcher, and desktop entry all match the autostart entries
+# (which already pass --no-sandbox) instead of warning on every launch.
+exec /opt/zen/zen-rt --no-sandbox --disable-dev-shm-usage "$@"
 """
         write_file(DIR_ROOTFS / "usr/local/bin/zen-browser", zen_launcher, mode=0o755)
         
-        # Zen's Firefox components declare libdl.so.2 while modern glibc
-        # folds libdl into libc. gcompat provides the ABI entry point, and these
-        # copies make the merged-library names resolvable inside the hermetic rootfs.
+        # Other gcompat-hosted glibc binaries declare libdl.so.2 while modern
+        # glibc folds libdl into libc. gcompat provides the ABI entry point, and
+        # these copies make the merged-library names resolvable in the rootfs.
+        # (Zen itself no longer depends on this: it runs on /opt/zen/rt.)
         libc_compat = DIR_ROOTFS / "lib/libc.so.6"
         if libc_compat.exists():
             for merged_name in ("libdl.so.2", "libm.so.6", "libpthread.so.0", "librt.so.1"):
@@ -521,6 +626,9 @@ Type=Fixed
             "image-x-generic": "roundrectangle 8%,20% 92%,84% 3,3",
             "multimedia-player": "polygon 30%,16% 84%,50% 30%,84%",
             "package-x-generic": "polygon 50%,8% 90%,30% 90%,70% 50%,92% 10%,70% 10%,30%",
+            "application-pdf": "polygon 50%,16% 86%,50% 50%,84% 14%,50%",
+            "audio-x-generic": "polygon 16%,38% 62%,38% 62%,16% 62%,84% 16%,62%",
+            "audio-editor": "circle 12%,12% 88%,88% circle 50%,50% 68%,68%",
             "applications-internet": "circle 8%,8% 92%,92% line 8%,50% 92%,50%",
             "preferences-desktop-display": "roundrectangle 8%,18% 92%,72% 3,3 line 50%,72% 50%,90%",
             "preferences-desktop-theme": "circle 26%,26% 74%,74% circle 50%,50% 66%,66%",
@@ -1176,7 +1284,6 @@ exit 127
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-pkg", SRC_RIBI_PKG, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi", SRC_RIBI_CLI, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-installer", SRC_RIBI_INSTALLER, mode=0o755)
-        write_file(DIR_ROOTFS / "usr/local/bin/ribi-setup", SRC_RIBI_SETUP, mode=0o755)
         editor_src = _component("ribi-code-editor.py")
         if not editor_src.is_file():
             raise RuntimeError(f"Missing Code Editor source: {editor_src}")
@@ -1187,6 +1294,7 @@ exit 127
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-app-prompt", prompt_src.read_text(), mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-snake", SRC_RIBI_SNAKE, mode=0o755)
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-2048", SRC_RIBI_2048, mode=0o755)
+        write_file(DIR_ROOTFS / "usr/local/bin/ribi-doctor", SRC_RIBI_DOCTOR, mode=0o755)
 
         # Preserve service identities created by the imported userspace. Only add
         # the Ribi accounts/groups that are required by our native init. Privileged
@@ -1203,9 +1311,32 @@ exit 127
             passwd += "ribi:x:1000:1000:Ribi User:/home/ribi:/bin/sh\n"
         if not any(line.startswith("messagebus:") for line in passwd.splitlines()):
             passwd += "messagebus:x:81:81:DBus Message Bus:/run/dbus:/sbin/nologin\n"
+        # dhcpcd is built with --enable-privsep; without its separation account it
+        # refuses to drop privileges and logs "no such user dhcpcd". Alpine's
+        # dhcpcd.pre-install creates this account and its home is group-writable.
+        if not any(line.startswith("dhcpcd:") for line in passwd.splitlines()):
+            passwd += "dhcpcd:x:100:101:dhcpcd:/var/lib/dhcpcd:/sbin/nologin\n"
         if not any(line.startswith("root:") for line in group.splitlines()): group += "root:x:0:\n"
         if not any(line.startswith("ribi:") for line in group.splitlines()): group += "ribi:x:1000:\n"
-        for gname,gid in (("audio",29),("video",44),("sudo",27)):
+        if not any(line.startswith("dhcpcd:") for line in group.splitlines()): group += "dhcpcd:x:101:\n"
+
+        def _gid_in_use(text, gid):
+            for line in text.splitlines():
+                f = line.split(":")
+                if len(f) >= 3 and f[2].isdigit() and int(f[2]) == gid:
+                    return True
+            return False
+
+        def _next_free_gid(text, start=102):
+            gid = start
+            while _gid_in_use(text, gid):
+                gid += 1
+            return gid
+
+        # gid 27 is video, 100 is users, and 1000 is the ribi user's primary
+        # group; derive a free system gid for sudo so no two groups collide.
+        sudo_gid = _next_free_gid(group)
+        for gname,gid in (("audio",29),("video",44),("sudo",sudo_gid)):
             if not any(line.startswith(gname+":") for line in group.splitlines()): group += f"{gname}:x:{gid}:ribi\n"
         # Add ribi to existing supplemental groups without destroying package groups.
         gl=[]
@@ -1216,6 +1347,10 @@ exit 127
                 f[3]=(f[3]+",ribi").lstrip(","); line=":".join(f)
             gl.append(line)
         group="\n".join(gl)+"\n"
+        dhcpcd_dir=DIR_ROOTFS / "var/lib/dhcpcd"
+        if dhcpcd_dir.is_dir():
+            try: os.chown(dhcpcd_dir, 100, 101)
+            except OSError: pass
         if not any(line.startswith("root:") for line in shadow.splitlines()): shadow += "root:!:1:0:99999:7:::\n"
         if not any(line.startswith("ribi:") for line in shadow.splitlines()): shadow += "ribi:!:1:0:99999:7:::\n"
         write_file(passwd_p, passwd)
@@ -1280,6 +1415,64 @@ exec /sbin/poweroff -f
         write_file(acpi_events / "power-button",
                    "event=button/power.*\naction=/usr/local/sbin/ribi-acpi-poweroff\n", mode=0o644)
 
+        # OBS Studio defaults. OBS 32's Simple output defaults to a fragmented
+        # "hybrid" MP4/MOV muxer, which segfaults in this minimal image the
+        # moment recording starts (the crash lands right after the muxer logs
+        # "Writing Hybrid MP4/MOV file"). MKV is the mature, crash-safe muxer
+        # and needs no fragmented-MP4 path, so ship a profile that selects it.
+        # The audio encoder is left at OBS's default; only the container changes.
+        #
+        # OBS only loads a profile/scene selection that its own configuration
+        # names, and it looks those up in user.ini (not global.ini). We ship
+        # both a named "ribi" profile and the "ribi" scene collection below.
+        # The desktop launcher still passes --profile ribi --collection ribi,
+        # so the container is guaranteed even if the wizard is ever re-enabled.
+        obs_base = DIR_ROOTFS / "home/ribi/.config/obs-studio"
+        # FirstRun=false skips OBS's auto-configuration wizard, which would
+        # otherwise re-detect the encoder/container on first launch and discard
+        # the MKV recording format set below.
+        write_file(obs_base / "global.ini", """[General]
+EnableAutoUpdates=false
+FirstRun=false
+SafeMode=false
+
+[Basic]
+Profile=ribi
+ProfileDir=ribi
+SceneCollection=ribi
+SceneCollectionFile=ribi
+""")
+        write_file(obs_base / "basic/profiles/ribi/basic.ini", """[General]
+Name=ribi
+
+[Output]
+Mode=Simple
+
+[SimpleOutput]
+RecFormat2=mkv
+RecQuality=Stream
+RecEncoder=x264
+RecTracks=1
+
+[Video]
+BaseCX=1280
+BaseCY=800
+OutputCX=1280
+OutputCY=800
+FPSCommon=30
+
+[Audio]
+SampleRate=48000
+ChannelSetup=Stereo
+""")
+        write_file(obs_base / "basic/scenes/ribi.json", _payload("obs-scene-collection.json"))
+        (obs_base / "basic/scenes").mkdir(parents=True, exist_ok=True)
+        for sub in (".config", ".config/obs-studio"):
+            try:
+                os.chown(DIR_ROOTFS / "home/ribi" / sub, 1000, 1000)
+            except OSError:
+                pass
+
         BuildLogger.info("Ribi core management services deployed.")
 
     def stage_7_synthesize_applications(self):
@@ -1307,16 +1500,17 @@ exec /sbin/poweroff -f
             ("ribi-file-explorer.desktop", "Ribi File Explorer", "ribi-file-explorer %U", "system-file-manager", "System;FileManager;", False),
             ("ribi-terminal.desktop", "Ribi Terminal", "ribi-terminal", "utilities-terminal", "System;TerminalEmulator;", False),
             ("zen-browser-ribi.desktop", "Zen Browser", "zen-browser %U", "zen-browser", "Network;WebBrowser;", False),
-            ("obs-studio-ribi.desktop", "OBS Studio", "obs --disable-shutdown-check", "obs", "AudioVideo;Recorder;", False),
+            ("obs-studio-ribi.desktop", "OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs", "AudioVideo;Recorder;", False),
             ("ribi-screenshot.desktop", "Ribi Screenshot", "ribi-screenshot", "camera-photo", "Graphics;Utility;", False),
             ("ribi-calculator.desktop", "Calculator", "galculator", "accessories-calculator", "Utility;Calculator;", False),
             ("ribi-image-viewer.desktop", "Image Viewer", "ristretto %U", "image-x-generic", "Graphics;Viewer;", False),
             ("ribi-media-player.desktop", "Media Player", "celluloid %U", "multimedia-player", "AudioVideo;Player;", False),
             ("ribi-archive-manager.desktop", "Archive Manager", "file-roller %U", "package-x-generic", "Utility;Archiving;", False),
             ("ribi-text-editor.desktop", "Text Editor", "mousepad %F", "accessories-text-editor", "Utility;TextEditor;", False),
+            ("ribi-document-viewer.desktop", "Document Viewer", "zathura %U", "application-pdf", "Office;Viewer;Graphics;", False),
+            ("ribi-audio-editor.desktop", "Audacity", "audacity %F", "audio-editor", "AudioVideo;Audio;Editor;", False),
             ("ribi-control-center.desktop", "Ribi Control Center", "ribi-control-center.py", "preferences-system", "System;Settings;", False),
-            ("ribi-installer.desktop", "Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "system-software-install", "System;", True),
-            ("ribi-setup.desktop", "Setup Ribi OS", "xterm -hold -e /usr/local/bin/ribi-setup", "system-software-install", "System;Settings;", False),
+            ("ribi-installer.desktop", "Install Ribi OS", "ribi-terminal -e sudo -n /usr/local/bin/ribi-installer", "system-software-install", "System;", False),
             ("ribi-edit.desktop", "Ribi Code Editor", "ribi-edit %F", "nvim", "Utility;TextEditor;Development;", True),
             ("ribi-snake.desktop", "Ribi Snake", "ribi-snake", "applications-games", "Game;", True),
             ("ribi-2048.desktop", "Ribi 2048", "ribi-2048", "applications-games", "Game;", True),
@@ -1327,10 +1521,6 @@ exec /sbin/poweroff -f
                 f"[Desktop Entry]\nVersion=1.0\nType=Application\nName={name}\nExec={exec_cmd}\n"
                 f"Icon={icon}\nCategories={cats}\nTerminal={'true' if term else 'false'}\nStartupNotify=false\n"
             )
-            # This root-only wizard currently lacks the installer's full target
-            # preflight. Keep it out of the app finder until its Stage 3/4 audit.
-            if fname == "ribi-setup.desktop":
-                content += "NoDisplay=true\n"
             write_file(apps_dir / fname, content)
 
         # Keep launch metadata available for users who inspect the filesystem,
@@ -1367,7 +1557,8 @@ exec /sbin/poweroff -f
         # previous applet list omitted both, so /init would silently fail every
         # `find`/`depmod` invocation with "not found" the instant it tried them.
         applets = ["sh", "mount", "umount", "mkdir", "cat", "mknod", "sleep", "ls", "echo",
-                   "grep", "head", "modprobe", "insmod", "find", "depmod", "chroot", "tr"]
+                   "grep", "head", "modprobe", "insmod", "find", "depmod", "chroot", "tr",
+                   "pivot_root"]
         # Never execute the x86_64 target BusyBox on the build host: the builder
         # is intentionally designed to run on ARM64/Termux, where that would fail
         # with Exec format error.  Inspect the ELF's printable strings instead.
@@ -1389,6 +1580,8 @@ exec /sbin/poweroff -f
             raise RuntimeError(f"Unable to inspect target BusyBox applet table without executing x86_64 code: {exc}") from exc
         if not re.search(r"(?:^|\n)switch_root(?:\n|$)", available_text):
             raise RuntimeError("Initramfs BusyBox does not advertise the required switch_root applet")
+        if not re.search(r"(?:^|\n)pivot_root(?:\n|$)", available_text):
+            raise RuntimeError("Initramfs BusyBox does not advertise the required pivot_root applet")
         for a in applets:
             (DIR_INITRAMFS / "bin" / a).symlink_to("/bin/busybox")
 
@@ -1748,7 +1941,7 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
         for util in ("parted","mkfs.ext4","mkfs.vfat","lsblk","blkid"):
             p=self.find_x86_64_binary(util,[DIR_ROOTFS]); 
             if not (p and p.is_file() and is_elf_x86_64(p) and not p.is_symlink()): raise RuntimeError(f"Validation Failed: standalone {util} missing")
-        for rel in ("sbin/ribi-init","usr/local/bin/ribisvc","usr/local/bin/ribi-pkg","usr/local/bin/ribi","usr/local/bin/ribi-installer","usr/local/bin/ribi-edit","usr/local/bin/ribi-snake","usr/local/bin/ribi-2048"):
+        for rel in ("sbin/ribi-init","usr/local/bin/ribisvc","usr/local/bin/ribi-pkg","usr/local/bin/ribi","usr/local/bin/ribi-installer","usr/local/bin/ribi-doctor","usr/local/bin/ribi-edit","usr/local/bin/ribi-snake","usr/local/bin/ribi-2048"):
             p=DIR_ROOTFS/rel; 
             if not (p.is_file() and os.access(p,os.X_OK)): raise RuntimeError(f"Validation Failed: /{rel} missing/not executable")
         passwd=(DIR_ROOTFS/"etc/passwd").read_text(); group=(DIR_ROOTFS/"etc/group").read_text(); shadow=(DIR_ROOTFS/"etc/shadow").read_text()
@@ -1765,7 +1958,7 @@ menuentry "{OS_NAME} {OS_VERSION} (Debug Mode)" {{
             if leaked:
                 raise RuntimeError(f"Validation Failed: no-desktop release contains GUI artifacts: {leaked}")
         else:
-            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "opt/zen/zen", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
+            for rel in ("usr/bin/Xorg", "usr/bin/startx", "usr/bin/galculator", "usr/bin/ristretto", "usr/bin/celluloid", "usr/bin/file-roller", "usr/bin/mousepad", "usr/bin/zathura", "usr/bin/audacity", "usr/bin/obs", "opt/zen/zen", "opt/zen/zen-rt", "usr/local/bin/zen-browser", "usr/local/bin/ribi-shell.py", "usr/local/bin/ribi-screenshot.py", "usr/local/bin/ribi-wm.py", "usr/local/bin/ribi-control-center.py", "usr/local/bin/ribi-dock", "usr/share/backgrounds/ribi-wallpaper.png"):
                 if not (DIR_ROOTFS / rel).exists():
                     raise RuntimeError(f"Validation Failed: Ribi desktop payload missing: /{rel}")
             for rel in ("usr/share/glib-2.0/schemas/gschemas.compiled", "usr/share/mime/mime.cache"):

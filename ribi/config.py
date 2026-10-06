@@ -97,6 +97,10 @@ REQUIRED_HOST_COMMANDS = [
     "llvm-nm",
     "strings",
     "convert",
+    # Zen ships as a glibc Firefox build; the builder bundles a self-contained
+    # glibc runtime next to it. patchelf both computes the closure and rewrites
+    # the launcher's interpreter and RPATH to that runtime.
+    "patchelf",
 ]
 
 # Checked separately (advisory only, not a hard preflight requirement): these are
@@ -179,10 +183,27 @@ TARGET_APK_PACKAGES_DESKTOP = [
     "mesa-dri-gallium", "font-dejavu", "libxft", "python3", "py3-gobject3", "py3-cairo", "gtk+3.0", "gdk-pixbuf-loaders", "glycin-loaders-all", "glycin-image-rs", "xrandr",
     "picom", "lxterminal",
     # Everyday desktop apps: calculator, image viewer, media player, archive
-    # manager, text editor, and the xdg-open dispatcher that ties them to MIME.
+    # manager, text editor, PDF viewer, and the xdg-open dispatcher that ties
+    # them to MIME types.
     "galculator", "ristretto", "celluloid", "file-roller", "mousepad", "xdg-utils",
+    # PDF viewing: zathura is a lightweight GTK3 document viewer; the poppler
+    # plugin supplies the actual PDF backend and registers the application/pdf
+    # MIME handler that xdg-open uses.
+    "zathura", "zathura-pdf-poppler",
 ]
-TARGET_APK_PACKAGES_APPS = ["gcompat", "obs-studio"]
+# Heavier media/recording applications kept separate from the base desktop so a
+# console-only profile can still omit them.
+TARGET_APK_PACKAGES_APPS = [
+    "gcompat",
+    # OBS Studio. v4l-utils provides libv4l2, the runtime the "Video Capture
+    # Device (V4L2)" source links against; without it OBS loads but the capture
+    # source cannot allocate its buffers. obs-studio's own dependency line
+    # references libv4l2 by soname, which the resolver cannot map back to a
+    # package, so it must be seeded explicitly.
+    "obs-studio", "v4l-utils",
+    # Audacity (audio recording/editing).
+    "audacity",
+]
 
 # Full seed list used to compute the transitive install closure.
 TARGET_APK_PACKAGES = (

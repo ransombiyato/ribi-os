@@ -14,6 +14,7 @@ HELP_TEXT = """
    ribi list                List installed native packages
    ribi service <cmd>       Manage services via ribisvc
    ribi sysinfo             Display hardware, memory, and kernel status
+   ribi doctor              Check the desktop apps and runtime databases
    ribi version             Show Ribi OS release information
 ===============================================================================
 """
@@ -34,6 +35,8 @@ def main():
         sys.exit(subprocess.run(["ribi-pkg", "list"]).returncode)
     elif action == "service" and len(sys.argv) > 2:
         sys.exit(subprocess.run(["ribisvc"] + sys.argv[2:]).returncode)
+    elif action == "doctor":
+        sys.exit(subprocess.run(["ribi-doctor"] + sys.argv[2:]).returncode)
     elif action == "sysinfo":
         print("=== Ribi OS System Status ===")
         subprocess.run(["uname", "-a"])

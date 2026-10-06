@@ -1,20 +1,29 @@
 #!/usr/bin/python3
-"""ribi-dock - the Ribi OS desktop panel and application launcher.
+"""ribi-dock - the Ribi OS desktop panel, taskbar, and application launcher.
 
 A single GTK3 window pinned to the bottom edge that provides:
   * an application menu,
   * quick-launch buttons for the core apps,
+  * a live taskbar of the currently open windows (click to focus/minimise,
+    right-click for the usual window actions),
   * a live clock,
   * a compact system tray (volume, battery).
 
 Icons are drawn with Cairo (see ribi_theme) so the dock never depends on the
 target's image/icon stack, which is intentionally minimal.
+
+The window list is read over EWMH with the standard X tools (xprop, xdotool)
+that the image already ships, rather than a desktop-specific client library.
+Every X call runs in a worker thread: the dock must never block the GTK main
+loop waiting on the X server, or the whole panel freezes while an application
+is busy starting.
 """
 
 import os
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import datetime
 
 try:
@@ -45,12 +54,18 @@ APPS = [
     ("media", "Media Player", "celluloid", "media"),
     ("archives", "Archive Manager", "file-roller", "archive"),
     ("text", "Text Editor", "mousepad", "text"),
+    ("pdf", "Document Viewer", "zathura", "pdf"),
+    ("audio", "Audacity", "audacity", "audio"),
     ("screenshot", "Screenshot", "ribi-screenshot", "screenshot"),
     ("control", "Settings", "ribi-control-center.py", "control"),
-    ("obs", "OBS Studio", "obs --disable-shutdown-check", "obs"),
+    ("obs", "OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs"),
 ]
 
 QUICK = ["files", "terminal", "zen", "editor", "control"]
+
+# Bounds on the taskbar: keep the panel usable even if a window is stuck or an
+# app spawns a flood of helper windows.
+MAX_TASKS = 12
 
 MENU_CSS = """
 #ribi-menu { background-color: rgba(16, 19, 29, 0.98); }
@@ -77,6 +92,119 @@ def run(command: str) -> None:
         subprocess.Popen(command, shell=True, start_new_session=True)
     except OSError as exc:
         log(f"launch failed: {command}: {exc}")
+
+
+# ---- Open-window taskbar ----------------------------------------------------
+
+def _xdo(*args: str) -> bool:
+    if shutil.which("xdotool") is None:
+        return False
+    try:
+        return subprocess.run(
+            ["xdotool", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=3, check=False,
+        ).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _xprop(window_id: str, field: str) -> str:
+    if shutil.which("xprop") is None:
+        return ""
+    try:
+        out = subprocess.run(
+            ["xprop", "-id", window_id, field],
+            capture_output=True, text=True, timeout=3, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if "=" not in out:
+        return ""
+    value = out.split("=", 1)[1].strip()
+    # xprop prints strings as `_NET_WM_NAME(UTF8_STRING) = "Title"`; drop the
+    # quoting so the taskbar shows the title, not `"Title"`.
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        value = value[1:-1]
+    return "" if value in ("", "0x0") else value
+
+
+def _window_class(window_id: str) -> str:
+    # _NET_WM_PID is a single number; _WM_CLASS looks like:
+    #   _WM_CLASS(STRING) = "instance", "Class"
+    pid = _xprop(window_id, "_NET_WM_PID").strip()
+    if pid.isdigit():
+        try:
+            with open(f"/proc/{pid}/comm", encoding="ascii", errors="replace") as handle:
+                name = handle.read().strip()
+            if name:
+                return name
+        except OSError:
+            pass
+    raw = _xprop(window_id, "WM_CLASS")
+    parts = [p.strip().strip('"') for p in raw.split(",") if p.strip()]
+    return parts[-1] if parts else ""
+
+
+def _active_window() -> str:
+    if shutil.which("xdotool") is None:
+        return ""
+    try:
+        out = subprocess.run(
+            ["xdotool", "getactivewindow"],
+            capture_output=True, text=True, timeout=3, check=False,
+        ).stdout.strip()
+        return out
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def list_windows() -> tuple[list, str]:
+    """Return ([{id, title, cls}], active_id) for normal, on-screen windows."""
+    if shutil.which("xdotool") is None:
+        return [], ""
+    try:
+        out = subprocess.run(
+            ["xdotool", "search", "--onlyvisible", "--name", "."],
+            capture_output=True, text=True, timeout=3, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return [], ""
+    active = _active_window()
+    windows = []
+    for window_id in out.split():
+        title = _xprop(window_id, "_NET_WM_NAME") or _xprop(window_id, "WM_NAME")
+        cls = _window_class(window_id)
+        # Skip the dock itself and anything with no title (hidden helpers).
+        if not title or cls == APP_ID:
+            continue
+        windows.append({"id": window_id, "title": title, "cls": cls})
+        if len(windows) >= MAX_TASKS:
+            break
+    return windows, active
+
+
+def _activate_window(window_id: str) -> None:
+    # Openbox ignores a plain focus request for a minimised window, so restore
+    # first, then raise and focus. The fallback handles a stale window id.
+    if not _xdo("windowactivate", "--sync", window_id):
+        _xdo("windowactivate", window_id)
+
+
+def window_action(window_id: str, action: str) -> None:
+    if action == "minimize":
+        _xdo("windowminimize", window_id)
+    elif action == "close":
+        _xdo("windowclose", window_id)
+    elif action == "maximize":
+        # Ask the window manager to maximise via EWMH so it accounts for its own
+        # decorations; a raw resize leaves the frame hanging off-screen.
+        if not _xdo("windowstate", "--add", "MAXIMIZED_VERT", "MAXIMIZED_HORZ", window_id):
+            _xdo("windowsize", window_id, "100%", "100%")
+            _xdo("windowmove", window_id, "0", "0")
+    elif action == "restore":
+        _activate_window(window_id)
+    else:
+        _activate_window(window_id)
 
 
 def build_menu() -> Gtk.Window:
@@ -156,8 +284,11 @@ def build_dock() -> Gtk.Window:
         button.connect("clicked", lambda _b, c=command: run(c))
         box.pack_start(button, False, False, 0)
 
-    spacer = Gtk.Box()
-    box.pack_start(spacer, True, True, 0)
+    # Open-window taskbar. It sits between the launchers and the tray and grows
+    # to fill the free space, so the clock/tray stay pinned to the right edge.
+    taskbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+    taskbar.set_name("ribi-taskbar")
+    box.pack_start(taskbar, True, True, 4)
 
     tray = Gtk.Label(label="")
     tray.set_name("ribi-tray")
@@ -178,6 +309,8 @@ def build_dock() -> Gtk.Window:
 
     window.add(box)
 
+    schedule_tasks(taskbar)
+
     screen = window.get_screen()
     monitor = screen.get_primary_monitor() or 0
     geometry = screen.get_monitor_geometry(monitor)
@@ -195,6 +328,81 @@ def build_dock() -> Gtk.Window:
     window.connect("size-allocate", place)
     window.show_all()
     return window
+
+
+def _clear(container) -> None:
+    for child in container.get_children():
+        container.remove(child)
+
+
+def _task_button(task, active: bool = False) -> Gtk.Button:
+    title = task["title"]
+    label = title if len(title) <= 22 else title[:21] + "…"
+    button = Gtk.Button()
+    button.set_name("ribi-task")
+    if active:
+        button.get_style_context().add_class("ribi-task-active")
+    button.set_relief(Gtk.ReliefStyle.NONE)
+    button.set_tooltip_text(f"{title}  ({task['cls']})")
+    content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    content.pack_start(ribi_theme.icon_widget("display", size=14), False, False, 0)
+    content.pack_start(Gtk.Label(label=label, xalign=0), False, False, 0)
+    button.add(content)
+    button.connect("clicked", lambda _b, wid=task["id"]: window_action(wid, "focus"))
+    button.connect("button-press-event", lambda _b, e, wid=task["id"]: _task_click(e, wid))
+    return button
+
+
+def _task_click(event, window_id: str):
+    if event.button != 3:
+        return False
+    menu = Gtk.Menu()
+    for label, action in (
+        ("Activate", "focus"),
+        ("Minimize", "minimize"),
+        ("Maximize", "maximize"),
+        ("Close", "close"),
+    ):
+        item = Gtk.MenuItem(label=label)
+        item.connect("activate", lambda _i, a=action: window_action(window_id, a))
+        menu.append(item)
+    menu.show_all()
+    menu.popup_at_pointer(event)
+    return True
+
+
+def refresh_tasks(taskbar) -> None:
+    """Rebuild the taskbar from the live EWMH window list, off the main loop."""
+    if getattr(refresh_tasks, "busy", False):
+        return
+    refresh_tasks.busy = True
+
+    def worker():
+        try:
+            windows, active = list_windows()
+        except Exception as exc:  # never let a poll error kill the dock
+            log(f"window poll failed: {exc}")
+            windows, active = [], ""
+
+        def apply():
+            refresh_tasks.busy = False
+            _clear(taskbar)
+            for task in windows:
+                taskbar.pack_start(_task_button(task, task["id"] == active), False, False, 0)
+            taskbar.show_all()
+            return False
+
+        GLib.idle_add(apply)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def schedule_tasks(taskbar) -> None:
+    """Refresh the taskbar now and every 2s. The timeout always returns True,
+    so the loop cannot stop even if a poll is still in flight (refresh_tasks
+    simply skips while one is running)."""
+    refresh_tasks(taskbar)
+    GLib.timeout_add_seconds(2, lambda: (refresh_tasks(taskbar), True)[1])
 
 
 def show_menu() -> None:
