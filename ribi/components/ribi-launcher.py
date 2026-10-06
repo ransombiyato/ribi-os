@@ -31,26 +31,28 @@ import ribi_theme  # noqa: E402
 
 APP_ID = "ribi-launcher"
 
-# (name, exec, glyph, keywords) - the curated catalog the launcher searches.
+# (name, exec, glyph, keywords, sandboxed) - the curated catalog the launcher
+# searches. `sandboxed` marks apps whose launcher runs an OS sandbox; their
+# tiles offer a "Run without sandbox" item on right-click.
 CATALOG = [
-    ("Files", "ribi-file-explorer", "files", "explorer home folders browse"),
-    ("Terminal", "ribi-terminal", "terminal", "shell console command"),
-    ("Zen Browser", "zen-browser", "zen", "web internet browser"),
-    ("Code Editor", "ribi-edit", "editor", "text code write"),
-    ("Calculator", "galculator", "calculator", "math arithmetic numbers"),
-    ("Image Viewer", "ristretto", "image", "photo picture graphics view"),
-    ("Media Player", "celluloid", "media", "video audio movie music play"),
-    ("Archive Manager", "file-roller", "archive", "zip tar extract compress"),
-    ("Text Editor", "mousepad", "text", "notepad notes write plain"),
-    ("Document Viewer", "zathura", "pdf", "pdf document reader ebook view"),
-    ("Audacity", "audacity", "audio", "audio sound record edit waveform"),
-    ("Screenshot", "ribi-screenshot", "screenshot", "capture screen image"),
-    ("Control Center", "ribi-control-center.py", "control", "settings preferences system"),
-    ("OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs", "record stream video"),
-    ("Snake", "ribi-terminal -e ribi-snake", "games", "game play"),
-    ("2048", "ribi-terminal -e ribi-2048", "games", "game play puzzle"),
-    ("Ribi Doctor", "ribi-terminal -e ribi-doctor", "control", "diagnostics logs health check doctor"),
-    ("Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "install", "install disk setup first boot welcome"),
+    ("Files", "ribi-file-explorer", "files", "explorer home folders browse", False),
+    ("Terminal", "ribi-terminal", "terminal", "shell console command", False),
+    ("Zen Browser", "zen-browser", "zen", "web internet browser", True),
+    ("Code Editor", "ribi-edit", "editor", "text code write", False),
+    ("Calculator", "galculator", "calculator", "math arithmetic numbers", False),
+    ("Image Viewer", "ristretto", "image", "photo picture graphics view", False),
+    ("Media Player", "celluloid", "media", "video audio movie music play", False),
+    ("Archive Manager", "file-roller", "archive", "zip tar extract compress", False),
+    ("Text Editor", "mousepad", "text", "notepad notes write plain", False),
+    ("Document Viewer", "zathura", "pdf", "pdf document reader ebook view", False),
+    ("Audacity", "audacity", "audio", "audio sound record edit waveform", False),
+    ("Screenshot", "ribi-screenshot", "screenshot", "capture screen image", False),
+    ("Control Center", "ribi-control-center.py", "control", "settings preferences system", False),
+    ("OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs", "record stream video", False),
+    ("Snake", "ribi-terminal -e ribi-snake", "games", "game play", False),
+    ("2048", "ribi-terminal -e ribi-2048", "games", "game play puzzle", False),
+    ("Ribi Doctor", "ribi-terminal -e ribi-doctor", "control", "diagnostics logs health check doctor", False),
+    ("Install Ribi OS", "sudo -n /usr/local/bin/ribi-installer", "install", "install disk setup first boot welcome", False),
 ]
 
 LAUNCHER_CSS = """
@@ -83,10 +85,24 @@ def run(command: str) -> None:
         sys.stderr.write(f"[ribi-launcher] launch failed: {command}: {exc}\n")
 
 
+def run_without_sandbox(command: str) -> None:
+    """Launch with the OS sandbox disabled for the whole process tree."""
+    env = dict(os.environ)
+    env["RIBI_DISABLE_SANDBOX"] = "1"
+    env["RIBI_NO_SANDBOX"] = "1"
+    env["RIBI_SANDBOX"] = "0"
+    try:
+        subprocess.Popen(command, shell=True, start_new_session=True, env=env)
+    except OSError as exc:
+        sys.stderr.write(f"[ribi-launcher] launch failed: {command}: {exc}\n")
+
+
 def _matches(entry, query: str) -> bool:
     if not query:
         return True
-    haystack = " ".join(entry[:1] + entry[2:]).lower()
+    # entry is (name, exec, glyph, keywords, sandboxed); match on the visible
+    # name, glyph and keywords only (never stringify the boolean flag).
+    haystack = " ".join((entry[0], entry[2], entry[3])).lower()
     return all(token in haystack for token in query.lower().split())
 
 
@@ -142,7 +158,7 @@ def build_launcher() -> Gtk.Window:
         run(command)
         Gtk.main_quit()
 
-    def make_tile(name, command, glyph):
+    def make_tile(name, command, glyph, sandboxed):
         button = Gtk.Button()
         button.get_style_context().add_class("ribi-launcher-tile")
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -154,6 +170,24 @@ def build_launcher() -> Gtk.Window:
         content.pack_start(label, False, False, 0)
         button.add(content)
         button.connect("clicked", lambda _b, c=command: activate(c))
+
+        def on_press(_widget, event, c=command, sb=sandboxed):
+            if event.button != 3:
+                return False
+            menu = Gtk.Menu()
+            if sb:
+                item = Gtk.MenuItem(label="Run without sandbox")
+                item.connect("activate", lambda _i, cc=c: (run_without_sandbox(cc), Gtk.main_quit()))
+                menu.append(item)
+            else:
+                item = Gtk.MenuItem(label="Run")
+                item.connect("activate", lambda _i, cc=c: activate(cc))
+                menu.append(item)
+            menu.show_all()
+            menu.popup_at_pointer(event)
+            return True
+
+        button.connect("button-press-event", on_press)
         return button
 
     def refresh(*_a):
@@ -162,8 +196,8 @@ def build_launcher() -> Gtk.Window:
         query = search.get_text().strip()
         shown = [e for e in CATALOG if _matches(e, query)]
         shown_state["entries"] = shown
-        for name, command, glyph, _kw in shown:
-            grid.add(make_tile(name, command, glyph))
+        for name, command, glyph, _kw, sandboxed in shown:
+            grid.add(make_tile(name, command, glyph, sandboxed))
         grid.show_all()
 
     def launch_first(*_a):

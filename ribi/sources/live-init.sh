@@ -94,21 +94,25 @@ mount_with_timeout() {
     wait "$_mt_pid"
 }
 
-# Hand the initramfs over to /sysroot with pivot_root, then exec the target init.
-# A plain `chroot` leaves the initramfs as the realmount root, which disables
-# user namespaces (unshare(CLONE_NEWUSER) returns EPERM); that breaks sandboxed
-# browsers such as Zen. pivot_root moves the target mount to / so user
-# namespaces work. The caller must have /dev, /proc and /sys already bound into
-# /sysroot. Fall back to chroot if pivot_root is unavailable.
-ribi_pivot_handoff() {
+# Hand the initramfs over to /sysroot, then exec the target init.
+# A bare `chroot` sets a non-standard root, and create_user_ns() rejects any
+# process whose fs root is not the mount-namespace root, so unshare(NEWUSER)
+# returns EPERM and sandboxed browsers cannot start. The kernel's own root
+# handoff (init/do_mounts.c prepare_namespace) instead moves the new root onto
+# / and chroots into it; replaying that sequence -- cd into the target,
+# `mount --move . /`, then `chroot .` -- makes the target the mount-namespace
+# root again and keeps user namespaces working. Unlike pivot_root it needs no
+# mount above the target, so it works from the initramfs rootfs and on the live
+# overlay root as well as the installed ext4 root. It must run in PID 1 (no
+# subshell) so the target init really becomes PID 1; a plain chroot remains as a
+# fallback only if the move fails. The caller must have /dev, /proc and /sys
+# already bound into /sysroot.
+ribi_root_handoff() {
     _init="$1"
-    if command -v pivot_root >/dev/null 2>&1; then
-        mkdir -p /sysroot/.ribi-oldroot
-        if cd /sysroot && pivot_root . .ribi-oldroot; then
-            exec chroot . "$_init"
-        fi
-        cd /
+    if cd /sysroot && mount --move . /; then
+        exec chroot . "$_init"
     fi
+    cd /
     exec chroot /sysroot "$_init"
 }
 
@@ -154,7 +158,7 @@ if grep -qw 'ribi.installed=1' /proc/cmdline 2>/dev/null; then
     if ! mount_with_timeout 10 mount --bind /proc /sysroot/proc; then exec /bin/sh; fi
     if ! mount_with_timeout 10 mount --rbind /sys /sysroot/sys; then exec /bin/sh; fi
     echo "[RIBI-INITRAMFS] installed-root handoff" >/dev/ttyS0 2>/dev/null || true
-    ribi_pivot_handoff /sbin/ribi-init
+    ribi_root_handoff /sbin/ribi-init
 fi
 
 draw_loader "Preparing live system" 1
@@ -347,4 +351,4 @@ fi
 ' "$_rc" >/dev/tty0 2>/dev/null || true
     printf '[RIBI-INITRAMFS] chroot handoff
 ' >/dev/ttyS0 2>/dev/null || true
-    ribi_pivot_handoff /sbin/ribi-init
+    ribi_root_handoff /sbin/ribi-init

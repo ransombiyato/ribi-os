@@ -182,6 +182,23 @@ Gotchas learned the hard way:
   joining or the doctor crashes with `TypeError`. A GUI app still alive after
   the timeout is healthy, not a failure. The doctor's OBS probe also needs
   `--profile ribi --collection ribi`.
+- **The boot handoff must make /sysroot the mount-namespace root.** A bare
+  `exec chroot /sysroot` leaves the initramfs root above the target, and
+  `create_user_ns()` then rejects `unshare(CLONE_NEWUSER)` with `EPERM`; the
+  effect is that every app sandbox (Zen's content sandbox, bwrap, glycin) fails
+  after boot even though it works inside the initramfs. `pivot_root` fixes the
+  root but cannot run from the initramfs `rootfs` (its root has no parent mount)
+  or on the live overlay root, so it fails with `EINVAL`. Replay the kernel's own
+  `prepare_namespace`/`switch_root` sequence instead — in PID 1, `cd /sysroot`,
+  `mount --move . /`, then `exec chroot . <init>` — which works on the
+  initramfs rootfs, the live overlay root, and the installed ext4 root.
+  Reproduce headlessly: boot the initramfs with `rdinit=/bin/sh`, set up a
+  mount, run the sequence, and check `unshare -U true`.
+- **The desktop right-click menu comes from Openbox, not the dock.**
+  `/etc/xdg/openbox/menu.xml` is loaded via `rc.xml`'s `<file>menu.xml</file>`
+  (the ribi user has no `~/.config/openbox/menu.xml` override). Stage 5 must
+  overwrite the stock Alpine menu with `ribi/payloads/openbox-menu.xml`, or the
+  dropdown lists distro apps the image does not ship.
 - **Setup and the installer are one program.** `ribi-setup.py` was merged into
   `ribi-installer.py`; the single `ribi-installer` runs the whole wizard
   (identity, networking, then erase-install / persistence / ram-only). Do not

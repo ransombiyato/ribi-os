@@ -367,30 +367,84 @@ def test_provisioned_group_gids_do_not_collide():
     assert '(("audio",29),("video",44),("sudo",sudo_gid))' in source
 
 
-def test_live_init_pivots_root_for_user_namespaces():
-    """chroot leaves / above the mount root and disables user namespaces."""
+def test_live_init_hands_off_root_for_user_namespaces():
+    """chroot sets a non-standard root, so create_user_ns() returns EPERM.
+
+    The handoff must replay the kernel's prepare_namespace/switch_root sequence:
+    move the target root onto / and chroot into it, so the target is once again
+    the mount-namespace root and unshare(CLONE_NEWUSER) keeps working.
+    """
     live = (REPO / "ribi" / "sources" / "live-init.sh").read_text(encoding="utf-8")
-    assert "ribi_pivot_handoff" in live, "the handoff must be centralised"
-    assert "pivot_root . .ribi-oldroot" in live, \
-        "the initramfs must pivot_root before exec'ing the target init"
-    assert "exec chroot /sysroot /sbin/ribi-init" not in live, \
-        "a plain chroot handoff disables user namespaces (breaks Zen sandbox)"
+    assert "ribi_root_handoff" in live, "the handoff must be centralised"
+    assert "mount --move . /" in live, \
+        "the initramfs must move the target root onto / before exec'ing the init"
+    assert 'exec chroot . "$_init"' in live, \
+        "the handoff must chroot into the moved root and exec the target init"
+    # pivot_root cannot work from the initramfs rootfs (its root has no parent),
+    # and chroot after a bare chroot would re-introduce the non-standard root.
+    assert "pivot_root . .ribi-oldroot" not in live, \
+        "pivot_root cannot run from the initramfs rootfs; use the switch_root move"
     assert "exec chroot /sysroot" in live, "a chroot fallback must remain"
 
 
-def test_initramfs_provisions_pivot_root_applet():
+def test_initramfs_provisions_switch_root_applet():
     source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
-    assert '"pivot_root"]' in source, "the initramfs applet list must include pivot_root"
-    assert "does not advertise the required pivot_root applet" in source, \
-        "the builder must guard the pivot_root applet like switch_root"
+    assert 'sbin/switch_root' in source and 'bin/switch_root' in source, \
+        "the initramfs must provide the switch_root applet"
+    assert "does not advertise the required switch_root applet" in source, \
+        "the builder must guard the switch_root applet"
+
+
+def test_desktop_right_click_menu_uses_ribi_catalog():
+    """The Openbox desktop right-click menu must ship the Ribi apps, not the
+    stock distro menu full of programs Ribi OS does not install."""
+    builder = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    assert 'etc/xdg/openbox/menu.xml' in builder and '"openbox-menu.xml"' in builder, \
+        "the builder must install the Ribi Openbox desktop menu"
+    menu = (REPO / "ribi" / "payloads" / "openbox-menu.xml").read_text(encoding="utf-8")
+    for app in ("ribi-file-explorer", "ribi-terminal", "zen-browser", "obs", "galculator"):
+        assert app in menu, f"the desktop menu must offer {app}"
+    for stale in ("gnome-calculator", "gedit", "firefox", "nautilus", "gimp"):
+        assert stale not in menu, f"the desktop menu must not list uninstalled {stale}"
+
+
+def test_zen_launcher_honours_no_sandbox_env():
+    """The dock/launcher "Run without sandbox" action sets RIBI_NO_SANDBOX."""
+    source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
+    launcher = source.split("#!/bin/sh", 1)[1].split('"""', 1)[0]
+    assert "RIBI_NO_SANDBOX" in launcher and "--no-sandbox" in launcher, \
+        "the zen launcher must translate RIBI_NO_SANDBOX into --no-sandbox"
+    assert "RIBI_SANDBOX" in launcher, "the launcher must honour the sandbox env flags"
+    assert "unshare -U" in launcher, \
+        "the launcher must probe user namespaces and only disable the sandbox when needed"
+
+
+def test_dock_and_launcher_offer_run_without_sandbox():
+    """Right-clicking a sandboxed app must offer 'Run without sandbox'."""
+    dock = (REPO / "ribi" / "components" / "ribi-dock.py").read_text(encoding="utf-8")
+    launcher = (REPO / "ribi" / "components" / "ribi-launcher.py").read_text(encoding="utf-8")
+    for name, text in (("dock", dock), ("launcher", launcher)):
+        assert "Run without sandbox" in text, f"{name} menu missing the sandbox action"
+        assert "run_without_sandbox" in text, f"{name} missing the runner"
+        assert "button-press-event" in text, f"{name} must handle right-click"
+        assert "RIBI_NO_SANDBOX" in text, f"{name} runner must set RIBI_NO_SANDBOX"
+        # The flag must mark Zen, and only entries carry it.
+        assert '"zen-browser", "zen"' in text and "True" in text, \
+            f"{name} catalog must flag the sandboxed app"
+    # The sandbox flag must not leak into search matching as a string.
+    assert "entry[0], entry[2], entry[3]" in launcher, \
+        "launcher matching must not include the boolean sandbox flag"
 
 
 def test_zen_launcher_disables_sandbox():
-    """Without user namespaces Zen's sandbox EPERMs; the shared launcher must opt out."""
+    """Zen's sandbox is default-on; the launcher opts out only when asked."""
     source = (REPO / "ribi" / "builder.py").read_text(encoding="utf-8")
     launcher = source.split("#!/bin/sh", 1)[1].split('"""', 1)[0]
-    assert "--no-sandbox" in launcher, \
-        "zen-browser must pass --no-sandbox because the kernel lacks user namespaces"
+    assert "--no-sandbox" in launcher, "zen-browser must be able to disable the sandbox"
+    # The flag must be conditional: the switch_root handoff keeps user
+    # namespaces working, so the sandbox stays enabled by default.
+    assert 'RIBI_NO_SANDBOX:-0' in launcher, \
+        "--no-sandbox must be gated on the RIBI_NO_SANDBOX env flag"
     assert "exec /opt/zen/zen-rt" in launcher
 
 

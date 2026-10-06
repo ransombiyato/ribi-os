@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- Ribi OS desktop right-click menu. Replaces the stock Openbox menu, which
+     listed distro apps Ribi OS does not ship. Entries mirror the dock and
+     launcher catalogs. -->
+
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+
+<menu id="apps-accessories-menu" label="Accessories">
+  <item label="Files">
+    <action name="Execute">
+      <command>ribi-file-explorer</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Terminal">
+    <action name="Execute">
+      <command>ribi-terminal</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Code Editor">
+    <action name="Execute">
+      <command>ribi-edit</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Text Editor">
+    <action name="Execute">
+      <command>mousepad</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Calculator">
+    <action name="Execute">
+      <command>galculator</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Archive Manager">
+    <action name="Execute">
+      <command>file-roller</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+</menu>
+
+<menu id="apps-graphics-menu" label="Graphics">
+  <item label="Image Viewer">
+    <action name="Execute">
+      <command>ristretto</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Document Viewer">
+    <action name="Execute">
+      <command>zathura</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Screenshot">
+    <action name="Execute">
+      <command>ribi-screenshot</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+</menu>
+
+<menu id="apps-multimedia-menu" label="Multimedia">
+  <item label="Media Player">
+    <action name="Execute">
+      <command>celluloid</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Audacity">
+    <action name="Execute">
+      <command>audacity</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="OBS Studio">
+    <action name="Execute">
+      <command>obs --disable-shutdown-check --profile ribi --collection ribi</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+</menu>
+
+<menu id="apps-net-menu" label="Internet">
+  <item label="Zen Browser">
+    <action name="Execute">
+      <command>zen-browser</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+</menu>
+
+<menu id="apps-games-menu" label="Games">
+  <item label="Snake">
+    <action name="Execute">
+      <command>ribi-terminal -e ribi-snake</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="2048">
+    <action name="Execute">
+      <command>ribi-terminal -e ribi-2048</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+</menu>
+
+<menu id="system-menu" label="System">
+  <item label="Settings">
+    <action name="Execute">
+      <command>ribi-control-center.py</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Ribi Doctor">
+    <action name="Execute">
+      <command>ribi-terminal -e ribi-doctor</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <item label="Install Ribi OS">
+    <action name="Execute">
+      <command>sudo -n /usr/local/bin/ribi-installer</command>
+      <startupnotify><enabled>yes</enabled></startupnotify>
+    </action>
+  </item>
+  <separator />
+  <item label="Reconfigure Openbox">
+    <action name="Reconfigure" />
+  </item>
+</menu>
+
+<menu id="root-menu" label="Ribi OS">
+  <separator label="Applications" />
+  <menu id="apps-accessories-menu"/>
+  <menu id="apps-graphics-menu"/>
+  <menu id="apps-multimedia-menu"/>
+  <menu id="apps-net-menu"/>
+  <menu id="apps-games-menu"/>
+  <separator label="System" />
+  <menu id="system-menu"/>
+  <separator />
+  <item label="Log Out">
+    <action name="Exit">
+      <prompt>yes</prompt>
+    </action>
+  </item>
+</menu>
+
+</openbox_menu>

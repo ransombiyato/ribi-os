@@ -43,22 +43,25 @@ APP_ID = "ribi-dock"
 MENU_MODE = "--menu" in sys.argv
 LOG = os.path.join(os.path.expanduser("~"), ".cache", "ribi-dock.log")
 
-# key -> (label, command, glyph)
+# key -> (label, command, glyph, sandboxed)
+# `sandboxed` marks apps whose launcher runs an OS sandbox (currently Zen's
+# content sandbox). Those get a "Run without sandbox" item in their right-click
+# menu; the flag is False for everything else.
 APPS = [
-    ("files", "Files", "ribi-file-explorer", "files"),
-    ("terminal", "Terminal", "ribi-terminal", "terminal"),
-    ("zen", "Zen Browser", "zen-browser", "zen"),
-    ("editor", "Editor", "ribi-edit", "editor"),
-    ("calculator", "Calculator", "galculator", "calculator"),
-    ("images", "Image Viewer", "ristretto", "image"),
-    ("media", "Media Player", "celluloid", "media"),
-    ("archives", "Archive Manager", "file-roller", "archive"),
-    ("text", "Text Editor", "mousepad", "text"),
-    ("pdf", "Document Viewer", "zathura", "pdf"),
-    ("audio", "Audacity", "audacity", "audio"),
-    ("screenshot", "Screenshot", "ribi-screenshot", "screenshot"),
-    ("control", "Settings", "ribi-control-center.py", "control"),
-    ("obs", "OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs"),
+    ("files", "Files", "ribi-file-explorer", "files", False),
+    ("terminal", "Terminal", "ribi-terminal", "terminal", False),
+    ("zen", "Zen Browser", "zen-browser", "zen", True),
+    ("editor", "Editor", "ribi-edit", "editor", False),
+    ("calculator", "Calculator", "galculator", "calculator", False),
+    ("images", "Image Viewer", "ristretto", "image", False),
+    ("media", "Media Player", "celluloid", "media", False),
+    ("archives", "Archive Manager", "file-roller", "archive", False),
+    ("text", "Text Editor", "mousepad", "text", False),
+    ("pdf", "Document Viewer", "zathura", "pdf", False),
+    ("audio", "Audacity", "audacity", "audio", False),
+    ("screenshot", "Screenshot", "ribi-screenshot", "screenshot", False),
+    ("control", "Settings", "ribi-control-center.py", "control", False),
+    ("obs", "OBS Studio", "obs --disable-shutdown-check --profile ribi --collection ribi", "obs", False),
 ]
 
 QUICK = ["files", "terminal", "zen", "editor", "control"]
@@ -92,6 +95,36 @@ def run(command: str) -> None:
         subprocess.Popen(command, shell=True, start_new_session=True)
     except OSError as exc:
         log(f"launch failed: {command}: {exc}")
+
+
+def run_without_sandbox(command: str) -> None:
+    """Launch a command with the OS sandbox disabled.
+
+    Some launchers wrap their app in a sandbox (Zen passes its own flags, but
+    the sandbox can be forced off through the environment as a fallback). This
+    sets the disable flag for the whole process tree and runs the command
+    unchanged, so it works for any catalog entry.
+    """
+    program = command.split()[0]
+    if shutil.which(program) is None:
+        log(f"skip missing program: {program}")
+        return
+    env = dict(os.environ)
+    env["RIBI_DISABLE_SANDBOX"] = "1"
+    env["RIBI_NO_SANDBOX"] = "1"
+    env["RIBI_SANDBOX"] = "0"
+    try:
+        subprocess.Popen(command, shell=True, start_new_session=True, env=env)
+    except OSError as exc:
+        log(f"launch failed: {command}: {exc}")
+
+
+def _app_entries():
+    """Normalise APPS entries to (label, command, glyph, sandboxed)."""
+    for entry in APPS:
+        key, label, command, glyph = entry[:4]
+        sandboxed = bool(entry[4]) if len(entry) > 4 else False
+        yield key, label, command, glyph, sandboxed
 
 
 # ---- Open-window taskbar ----------------------------------------------------
@@ -207,6 +240,30 @@ def window_action(window_id: str, action: str) -> None:
         _activate_window(window_id)
 
 
+def _attach_app_menu(button: Gtk.Button, label: str, command: str, sandboxed: bool) -> None:
+    """Wire a launcher button to run on click and, for sandboxed apps, offer a
+    "Run without sandbox" item on right-click."""
+    button.connect("clicked", lambda _b, c=command: run(c))
+
+    def on_press(_widget, event, c=command):
+        if event.button != 3:
+            return False
+        menu = Gtk.Menu()
+        if sandboxed:
+            item = Gtk.MenuItem(label="Run without sandbox")
+            item.connect("activate", lambda _i, cc=c: run_without_sandbox(cc))
+            menu.append(item)
+        else:
+            item = Gtk.MenuItem(label="Run")
+            item.connect("activate", lambda _i, cc=c: run(cc))
+            menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    button.connect("button-press-event", on_press)
+
+
 def build_menu() -> Gtk.Window:
     window = Gtk.Window(title="Ribi Applications")
     window.set_name("ribi-menu")
@@ -218,14 +275,15 @@ def build_menu() -> Gtk.Window:
     ribi_theme.apply_css(window, ribi_theme.base_css() + MENU_CSS)
 
     grid = Gtk.Grid(column_spacing=6, row_spacing=6)
-    for index, (_key, label, command, glyph) in enumerate(APPS):
+    for index, (_key, label, command, glyph, sandboxed) in enumerate(_app_entries()):
         button = Gtk.Button()
         button.set_tooltip_text(label)
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         box.pack_start(ribi_theme.icon_widget(glyph, size=24), False, False, 0)
         box.pack_start(Gtk.Label(label=label, xalign=0), True, True, 0)
         button.add(box)
-        button.connect("clicked", lambda _b, c=command: (run(c), window.destroy()))
+        _attach_app_menu(button, label, command, sandboxed)
+        button.connect("clicked", lambda _b: window.destroy())
         grid.attach(button, index % 2, index // 2, 1, 1)
 
     window.add(grid)
@@ -276,12 +334,12 @@ def build_dock() -> Gtk.Window:
     box.pack_start(menu_button, False, False, 0)
 
     for key in QUICK:
-        entry = next((a for a in APPS if a[0] == key), None)
+        entry = next((a for a in _app_entries() if a[0] == key), None)
         if entry is None:
             continue
-        _key, label, command, glyph = entry
+        _key, label, command, glyph, sandboxed = entry
         button = ribi_theme.icon_button(glyph, tooltip=label)
-        button.connect("clicked", lambda _b, c=command: run(c))
+        _attach_app_menu(button, label, command, sandboxed)
         box.pack_start(button, False, False, 0)
 
     # Open-window taskbar. It sits between the launchers and the tray and grows

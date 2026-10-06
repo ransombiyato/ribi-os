@@ -547,12 +547,19 @@ class RibiMasterBuilder:
 set -eu
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
-# The bespoke kernel does not grant unprivileged user namespaces, so Zen's
-# content sandbox cannot initialise and it prints
-# "CanCreateUserNamespace() clone() failure: EPERM". Disable the sandbox here
-# so the dock, launcher, and desktop entry all match the autostart entries
-# (which already pass --no-sandbox) instead of warning on every launch.
-exec /opt/zen/zen-rt --no-sandbox --disable-dev-shm-usage "$@"
+# Zen's content sandbox needs unprivileged user namespaces. The initramfs
+# hands off to the target root with the kernel switch_root sequence, so user
+# namespaces work on both the installed root and the live overlay root and the
+# sandbox stays on. Probe once anyway and only disable the sandbox when it
+# cannot work. RIBI_NO_SANDBOX lets the dock/launcher "Run without sandbox"
+# action force it off even where the sandbox would otherwise work.
+_sandbox=""
+if [ "${RIBI_NO_SANDBOX:-0}" = "1" ] || [ "${RIBI_DISABLE_SANDBOX:-0}" = "1" ] || [ "${RIBI_SANDBOX:-1}" = "0" ]; then
+    _sandbox="--no-sandbox"
+elif ! unshare -U true 2>/dev/null; then
+    _sandbox="--no-sandbox"
+fi
+exec /opt/zen/zen-rt $_sandbox --disable-dev-shm-usage "$@"
 """
         write_file(DIR_ROOTFS / "usr/local/bin/zen-browser", zen_launcher, mode=0o755)
         
@@ -1191,6 +1198,10 @@ exec /usr/bin/xfce4-screenshooter -r -s "/home/ribi/Pictures/Screenshots/Selecti
         write_file(DIR_ROOTFS / "etc/xdg/ribi/picom.conf", _payload("ribi-picom.conf"))
         # Terminal front-end: prefers lxterminal, falls back to xterm.
         write_file(DIR_ROOTFS / "usr/local/bin/ribi-terminal", _payload("ribi-terminal.sh"), mode=0o755)
+        # Desktop right-click menu. The stock Openbox menu lists distro apps
+        # Ribi OS does not ship; replace it with the Ribi catalog so the
+        # dropdown opens the apps that are actually installed.
+        write_file(DIR_ROOTFS / "etc/xdg/openbox/menu.xml", _payload("openbox-menu.xml"))
         # Patch the shipped keymap: inject the launcher shortcuts and point the
         # theme at Ribi. The stock bindings are kept, so only these keys change.
         openbox_rc = DIR_ROOTFS / "etc/xdg/openbox/rc.xml"
